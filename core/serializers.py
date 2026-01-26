@@ -152,7 +152,10 @@ class StaffSerializer(serializers.ModelSerializer):
         return obj.subjects.count()
 
     def get_assigned_classes(self, obj):
-        return ClassSerializer(obj.class_teacher.all(), many=True).data
+        # Since class_teacher is OneToOne, return array with single class or empty array
+        if obj.class_teacher:
+            return [ClassSerializer(obj.class_teacher).data]
+        return []
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
