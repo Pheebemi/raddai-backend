@@ -40,11 +40,11 @@ class User(AbstractUser):
         """Get the appropriate profile based on user role"""
         try:
             if self.role == self.Role.STUDENT:
-                return self.student_user
+                return self.student_profile
             elif self.role == self.Role.STAFF:
-                return self.staff_user
+                return self.staff_profile
             elif self.role == self.Role.PARENT:
-                return self.parent_user
+                return self.parent_profile
         except:
             return None
         return None
@@ -117,7 +117,7 @@ class Staff(models.Model):
         LIBRARIAN = 'librarian', 'Librarian'
         COUNSELOR = 'counselor', 'Counselor'
 
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_user')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_profile')
     staff_id = models.CharField(max_length=20, unique=True)
     designation = models.CharField(max_length=20, choices=Designation.choices, default=Designation.TEACHER)
     joining_date = models.DateField(default=timezone.now)
@@ -133,7 +133,7 @@ class Staff(models.Model):
 
 class Parent(models.Model):
     """Parent profile model"""
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='parent_user')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='parent_profile')
     parent_id = models.CharField(max_length=20, unique=True)
 
     # Relationship to children
@@ -156,8 +156,19 @@ class Result(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE)
     term = models.CharField(max_length=10, choices=Term.choices)
-    marks_obtained = models.DecimalField(max_digits=5, decimal_places=2)
-    total_marks = models.DecimalField(max_digits=5, decimal_places=2)
+
+    # CA Scores (Continuous Assessment) - each worth 10 marks
+    ca1_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 1 (max 10 marks)")
+    ca2_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 2 (max 10 marks)")
+    ca3_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 3 (max 10 marks)")
+    ca4_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 4 (max 10 marks)")
+
+    # Final Exam Score - worth 60 marks
+    exam_score = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Final Exam (max 60 marks)")
+
+    # Calculated fields
+    marks_obtained = models.DecimalField(max_digits=5, decimal_places=2, editable=False)
+    total_marks = models.DecimalField(max_digits=5, decimal_places=2, default=100, editable=False)
     grade = models.CharField(max_length=5, blank=True)  # e.g., "A+", "B", "C"
     remarks = models.TextField(blank=True)
     uploaded_by = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True)
@@ -166,8 +177,43 @@ class Result(models.Model):
     class Meta:
         unique_together = ['student', 'subject', 'academic_year', 'term']
 
+    def save(self, *args, **kwargs):
+        """Calculate total marks obtained before saving"""
+        # CA scores total (40 marks max)
+        ca_total = (self.ca1_score + self.ca2_score + self.ca3_score + self.ca4_score)
+        # Exam score (60 marks max)
+        # Total marks obtained = CA total + Exam score
+        self.marks_obtained = ca_total + self.exam_score
+        self.total_marks = 100  # Always 100 (40 CA + 60 Exam)
+
+        # Calculate grade based on percentage
+        percentage = self.percentage
+        if percentage >= 90:
+            self.grade = 'A+'
+        elif percentage >= 80:
+            self.grade = 'A'
+        elif percentage >= 70:
+            self.grade = 'B+'
+        elif percentage >= 60:
+            self.grade = 'B'
+        elif percentage >= 50:
+            self.grade = 'C+'
+        elif percentage >= 40:
+            self.grade = 'C'
+        elif percentage >= 30:
+            self.grade = 'D'
+        else:
+            self.grade = 'F'
+
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.student} - {self.subject} ({self.term} {self.academic_year})"
+
+    @property
+    def ca_total(self):
+        """Calculate total CA marks"""
+        return self.ca1_score + self.ca2_score + self.ca3_score + self.ca4_score
 
     @property
     def percentage(self):

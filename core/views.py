@@ -36,7 +36,7 @@ class IsOwnerOrAdmin(permissions.BasePermission):
             if hasattr(obj, 'student'):
                 # Check if staff teaches this student's class/subject
                 try:
-                    staff_profile = request.user.staff_user
+                    staff_profile = request.user.staff_profile
                     return (obj.student.current_class and
                            obj.student.current_class.class_teacher == staff_profile)
                 except:
@@ -45,7 +45,7 @@ class IsOwnerOrAdmin(permissions.BasePermission):
         # Parents can access their children's data
         if request.user.role == 'parent':
             try:
-                parent_profile = request.user.parent_user
+                parent_profile = request.user.parent_profile
                 if hasattr(obj, 'student') and obj.student in parent_profile.children.all():
                     return True
                 if hasattr(obj, 'user') and obj.user == request.user:
@@ -69,7 +69,7 @@ class UserViewSet(viewsets.ModelViewSet):
         elif user.role == 'staff':
             # Staff can see students in their classes
             try:
-                staff_profile = user.staff_user
+                staff_profile = user.staff_profile
                 student_ids = []
                 if staff_profile.class_teacher.exists():
                     for class_obj in staff_profile.class_teacher.all():
@@ -80,7 +80,7 @@ class UserViewSet(viewsets.ModelViewSet):
         elif user.role == 'parent':
             # Parents can see themselves and their children
             try:
-                parent_profile = user.parent_user
+                parent_profile = user.parent_profile
                 children_ids = parent_profile.children.values_list('user_id', flat=True)
                 return User.objects.filter(Q(id=user.id) | Q(id__in=children_ids))
             except:
@@ -154,7 +154,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         elif user.role == 'staff':
             # Staff can see students in their classes
             try:
-                staff_profile = user.staff_user
+                staff_profile = user.staff_profile
                 return Student.objects.filter(current_class__class_teacher=staff_profile)
             except:
                 return Student.objects.none()
@@ -222,7 +222,7 @@ class ResultViewSet(viewsets.ModelViewSet):
         elif user.role == 'staff':
             # Staff can see results they uploaded or for students they teach
             try:
-                staff_profile = user.staff_user
+                staff_profile = user.staff_profile
                 return Result.objects.filter(
                     Q(uploaded_by=staff_profile) |
                     Q(student__current_class__class_teacher=staff_profile)
@@ -232,14 +232,14 @@ class ResultViewSet(viewsets.ModelViewSet):
         elif user.role == 'student':
             # Students can see their own results
             try:
-                student_profile = user.student_user
+                student_profile = user.student_profile
                 return Result.objects.filter(student=student_profile)
             except:
                 return Result.objects.none()
         elif user.role == 'parent':
             # Parents can see their children's results
             try:
-                parent_profile = user.parent_user
+                parent_profile = user.parent_profile
                 return Result.objects.filter(student__in=parent_profile.children.all())
             except:
                 return Result.objects.none()
@@ -279,14 +279,14 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         elif user.role == 'student':
             # Students can see their own fee payments
             try:
-                student_profile = user.student_user
+                student_profile = user.student_profile
                 return FeePayment.objects.filter(student=student_profile)
             except:
                 return FeePayment.objects.none()
         elif user.role == 'parent':
             # Parents can see their children's fee payments
             try:
-                parent_profile = user.parent_user
+                parent_profile = user.parent_profile
                 return FeePayment.objects.filter(student__in=parent_profile.children.all())
             except:
                 return FeePayment.objects.none()
@@ -334,21 +334,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         elif user.role == 'staff':
             # Staff can see attendance for classes they teach
             try:
-                staff_profile = user.staff_user
+                staff_profile = user.staff_profile
                 return Attendance.objects.filter(class_period__class_teacher=staff_profile)
             except:
                 return Attendance.objects.none()
         elif user.role == 'student':
             # Students can see their own attendance
             try:
-                student_profile = user.student_user
+                student_profile = user.student_profile
                 return Attendance.objects.filter(student=student_profile)
             except:
                 return Attendance.objects.none()
         elif user.role == 'parent':
             # Parents can see their children's attendance
             try:
-                parent_profile = user.parent_user
+                parent_profile = user.parent_profile
                 return Attendance.objects.filter(student__in=parent_profile.children.all())
             except:
                 return Attendance.objects.none()
@@ -417,7 +417,7 @@ def dashboard_stats(request):
 
     elif user.role == 'student':
         try:
-            student_profile = user.student_user
+            student_profile = user.student_profile
             stats = {
                 'current_class': student_profile.current_class.name if student_profile.current_class else None,
                 'total_results': Result.objects.filter(student=student_profile).count(),
@@ -434,7 +434,7 @@ def dashboard_stats(request):
 
     elif user.role == 'parent':
         try:
-            parent_profile = user.parent_user
+            parent_profile = user.parent_profile
             children_count = parent_profile.children.count()
             total_pending_fees = FeePayment.objects.filter(
                 student__in=parent_profile.children.all(), status='pending'

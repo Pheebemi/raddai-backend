@@ -29,11 +29,25 @@ class UserSerializer(serializers.ModelSerializer):
         profile = obj.get_profile()
         if profile:
             if obj.role == 'student':
-                return StudentSerializer(profile).data
+                return {
+                    'id': profile.id,
+                    'student_id': profile.student_id,
+                    'current_class': profile.current_class.name if profile.current_class else None,
+                    'admission_date': profile.admission_date,
+                }
             elif obj.role == 'staff':
-                return StaffSerializer(profile).data
+                return {
+                    'id': profile.id,
+                    'staff_id': profile.staff_id,
+                    'designation': profile.designation,
+                    'joining_date': profile.joining_date,
+                }
             elif obj.role == 'parent':
-                return ParentSerializer(profile).data
+                return {
+                    'id': profile.id,
+                    'parent_id': profile.parent_id,
+                    'children_count': profile.children.count(),
+                }
         return None
 
     def create(self, validated_data):
@@ -117,6 +131,12 @@ class StudentSerializer(serializers.ModelSerializer):
     def get_parents_count(self, obj):
         return obj.parents.count()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Remove user_details to avoid circular reference when used in nested serialization
+        if hasattr(self, 'parent') and isinstance(self.parent, serializers.Serializer):
+            self.fields.pop('user_details', None)
+
 
 class StaffSerializer(serializers.ModelSerializer):
     """Serializer for Staff model"""
@@ -134,15 +154,30 @@ class StaffSerializer(serializers.ModelSerializer):
     def get_assigned_classes(self, obj):
         return ClassSerializer(obj.class_teacher.all(), many=True).data
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Remove user_details to avoid circular reference when used in nested serialization
+        if hasattr(self, 'parent') and isinstance(self.parent, serializers.Serializer):
+            self.fields.pop('user_details', None)
+
 
 class ParentSerializer(serializers.ModelSerializer):
     """Serializer for Parent model"""
     user_details = UserSerializer(source='user', read_only=True)
-    children_details = StudentSerializer(source='children', many=True, read_only=True)
+    children_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Parent
         fields = '__all__'
+
+    def get_children_count(self, obj):
+        return obj.children.count()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Remove user_details to avoid circular reference when used in nested serialization
+        if hasattr(self, 'parent') and isinstance(self.parent, serializers.Serializer):
+            self.fields.pop('user_details', None)
 
 
 class ResultSerializer(serializers.ModelSerializer):
@@ -151,15 +186,49 @@ class ResultSerializer(serializers.ModelSerializer):
     subject_name = serializers.CharField(source='subject.name', read_only=True)
     academic_year_name = serializers.CharField(source='academic_year.name', read_only=True)
     uploaded_by_name = serializers.SerializerMethodField()
+    ca_total = serializers.ReadOnlyField()
+    percentage = serializers.ReadOnlyField()
 
     class Meta:
         model = Result
-        fields = '__all__'
+        fields = [
+            'id', 'student', 'student_name', 'subject', 'subject_name',
+            'academic_year', 'academic_year_name', 'term',
+            'ca1_score', 'ca2_score', 'ca3_score', 'ca4_score', 'ca_total',
+            'exam_score', 'marks_obtained', 'total_marks', 'percentage',
+            'grade', 'remarks', 'uploaded_by', 'uploaded_by_name', 'upload_date'
+        ]
+        read_only_fields = ['marks_obtained', 'total_marks', 'grade', 'ca_total', 'percentage']
 
     def get_uploaded_by_name(self, obj):
         if obj.uploaded_by:
             return obj.uploaded_by.user.get_full_name()
         return None
+
+    def validate_ca1_score(self, value):
+        if value < 0 or value > 10:
+            raise serializers.ValidationError("CA1 score must be between 0 and 10")
+        return value
+
+    def validate_ca2_score(self, value):
+        if value < 0 or value > 10:
+            raise serializers.ValidationError("CA2 score must be between 0 and 10")
+        return value
+
+    def validate_ca3_score(self, value):
+        if value < 0 or value > 10:
+            raise serializers.ValidationError("CA3 score must be between 0 and 10")
+        return value
+
+    def validate_ca4_score(self, value):
+        if value < 0 or value > 10:
+            raise serializers.ValidationError("CA4 score must be between 0 and 10")
+        return value
+
+    def validate_exam_score(self, value):
+        if value < 0 or value > 60:
+            raise serializers.ValidationError("Exam score must be between 0 and 60")
+        return value
 
 
 class FeeStructureSerializer(serializers.ModelSerializer):
