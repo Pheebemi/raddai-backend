@@ -201,7 +201,7 @@ class ResultSerializer(serializers.ModelSerializer):
             'exam_score', 'marks_obtained', 'total_marks', 'percentage',
             'grade', 'remarks', 'uploaded_by', 'uploaded_by_name', 'upload_date'
         ]
-        read_only_fields = ['marks_obtained', 'total_marks', 'grade', 'ca_total', 'percentage']
+        read_only_fields = ['marks_obtained', 'total_marks', 'grade', 'ca_total', 'percentage', 'uploaded_by', 'upload_date']
 
     def get_uploaded_by_name(self, obj):
         if obj.uploaded_by:

@@ -21,6 +21,10 @@ from .serializers import (
 class IsOwnerOrAdmin(permissions.BasePermission):
     """Custom permission to only allow owners of an object or admins to access it"""
 
+    def has_permission(self, request, view):
+        """Check if user has permission to access the view"""
+        return request.user and request.user.is_authenticated
+
     def has_object_permission(self, request, view, obj):
         if request.user.role == 'admin' or request.user.role == 'management':
             return True
@@ -54,6 +58,16 @@ class IsOwnerOrAdmin(permissions.BasePermission):
                 return False
 
         return False
+
+
+class IsStaffOrAdmin(permissions.BasePermission):
+    """Custom permission to only allow staff or admins to create/update results"""
+
+    def has_permission(self, request, view):
+        """Check if user is staff or admin"""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return request.user.role in ['staff', 'admin', 'management']
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -215,6 +229,13 @@ class ResultViewSet(viewsets.ModelViewSet):
     serializer_class = ResultSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
+    def perform_create(self, serializer):
+        """Set the uploaded_by field to the current staff user when creating results"""
+        if self.request.user.role == 'staff':
+            serializer.save(uploaded_by=self.request.user.staff_profile)
+        else:
+            serializer.save()
+
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin' or user.role == 'management':
@@ -250,7 +271,7 @@ class ResultViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
         # Only staff can create/update results
         elif self.action in ['create', 'update', 'partial_update']:
-            return [permissions.IsAuthenticated(), permissions.BasePermission]  # Custom permission needed
+            return [permissions.IsAuthenticated(), IsStaffOrAdmin()]
         return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
 
 
