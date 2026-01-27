@@ -247,7 +247,7 @@ class FeePaymentSerializer(serializers.ModelSerializer):
     """Serializer for FeePayment model"""
     student_name = serializers.CharField(source='student.user.get_full_name', read_only=True)
     fee_type_name = serializers.CharField(source='fee_structure.fee_type', read_only=True)
-    academic_year = serializers.CharField(source='fee_structure.academic_year.name', read_only=True)
+    academic_year_name = serializers.CharField(source='academic_year.name', read_only=True)
 
     class Meta:
         model = FeePayment

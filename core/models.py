@@ -257,6 +257,14 @@ class FeePayment(models.Model):
 
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='fee_payments')
     fee_structure = models.ForeignKey(FeeStructure, on_delete=models.CASCADE)
+    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, null=True, blank=True)
+
+    class Term(models.TextChoices):
+        FIRST = 'first', 'First Term'
+        SECOND = 'second', 'Second Term'
+        THIRD = 'third', 'Third Term'
+
+    term = models.CharField(max_length=10, choices=Term.choices, null=True, blank=True)
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     payment_date = models.DateTimeField(auto_now_add=True)
@@ -265,6 +273,9 @@ class FeePayment(models.Model):
     payment_method = models.CharField(max_length=50, blank=True)  # e.g., "Online", "Cash", "Bank Transfer"
     transaction_id = models.CharField(max_length=100, blank=True, unique=True)
     remarks = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = ['student', 'academic_year', 'term']  # Prevent duplicate payments for same term
 
     def __str__(self):
         return f"{self.student} - {self.fee_structure.fee_type} ({self.status})"
