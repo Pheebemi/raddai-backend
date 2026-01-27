@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.core.exceptions import ValidationError
+from django import forms
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
     Result, FeeStructure, FeePayment, Announcement, Attendance
@@ -412,6 +413,32 @@ class FeeStructureAdmin(admin.ModelAdmin):
     list_display = ('academic_year', 'grade', 'fee_type', 'amount', 'description')
     list_filter = ('academic_year', 'grade', 'fee_type')
     search_fields = ('description',)
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        # Get unique grades from existing classes and create choices
+        grades = Class.objects.values_list('grade', flat=True).distinct().order_by('grade')
+        grade_choices = [(grade, f'Grade {grade}') for grade in grades]
+
+        # Replace the grade field with a choice field
+        form.base_fields['grade'].widget = forms.Select(choices=grade_choices)
+        return form
+
+    def formfield_for_choice_field(self, db_field, request, **kwargs):
+        if db_field.name == 'grade':
+            # Get unique grades from Class model
+            grades = Class.objects.values_list('grade', flat=True).distinct().order_by('grade')
+            choices = [(grade, f'Grade {grade}') for grade in grades]
+            kwargs['choices'] = choices
+        return super().formfield_for_choice_field(db_field, request, **kwargs)
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        # Make grade field a choice field with available grades
+        grades = Class.objects.values_list('grade', flat=True).distinct().order_by('grade')
+        grade_choices = [(grade, f'Grade {grade}') for grade in grades]
+        form.base_fields['grade'] = forms.ChoiceField(choices=grade_choices)
+        return form
 
 
 @admin.register(FeePayment)
