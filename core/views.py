@@ -567,15 +567,33 @@ def dashboard_stats(request):
 
     if user.role == 'management':
         # School-wide statistics
-        # Calculate revenue from paid fee payments
-        total_revenue = FeePayment.objects.filter(status='paid').aggregate(
-            total=Sum('total_amount')
-        )['total'] or 0
+        # Calculate revenue from paid fee payments (use amount_paid for actual collected amount)
+        revenue_agg = FeePayment.objects.filter(status='paid').aggregate(
+            total=Sum('amount_paid')
+        )
+        total_revenue = revenue_agg['total']
+        if total_revenue is None:
+            total_revenue = 0
+        else:
+            total_revenue = float(total_revenue)
+
+        print(f"Total revenue calculation: {total_revenue}")
+        print(f"Revenue aggregate result: {revenue_agg}")
+        print(f"Paid payments count: {FeePayment.objects.filter(status='paid').count()}")
 
         # Calculate pending fees
-        pending_fees = FeePayment.objects.filter(status__in=['pending', 'overdue']).aggregate(
+        pending_agg = FeePayment.objects.filter(status__in=['pending', 'overdue']).aggregate(
             total=Sum('total_amount')
-        )['total'] or 0
+        )
+        pending_fees = pending_agg['total']
+        if pending_fees is None:
+            pending_fees = 0
+        else:
+            pending_fees = float(pending_fees)
+
+        print(f"Pending fees calculation: {pending_fees}")
+        print(f"Pending aggregate result: {pending_agg}")
+        print(f"Pending payments count: {FeePayment.objects.filter(status__in=['pending', 'overdue']).count()}")
 
         # Get top performers (students with highest average grades)
         top_performers = []
@@ -614,14 +632,16 @@ def dashboard_stats(request):
         # Calculate average attendance (placeholder for now)
         average_attendance = 85  # This would need Attendance model data
 
+        print(f"Final stats before return: total_revenue={total_revenue}, pending_fees={pending_fees}")
+
         stats = {
             'total_students': Student.objects.count(),
             'total_staff': Staff.objects.count(),
             'total_parents': Parent.objects.count(),
             'total_classes': Class.objects.count(),
             'total_subjects': Subject.objects.count(),
-            'total_revenue': float(total_revenue),
-            'pending_fees': float(pending_fees),
+            'total_revenue': float(total_revenue) if total_revenue else 0.0,
+            'pending_fees': float(pending_fees) if pending_fees else 0.0,
             'average_attendance': average_attendance,
             'top_performers': top_performers,
             'recent_results': recent_results_data,
@@ -630,6 +650,8 @@ def dashboard_stats(request):
                 is_active=True, for_management=True
             ).order_by('-created_at')[:5].count()
         }
+
+        print(f"Stats dict: {stats}")
 
     elif user.role == 'staff':
         try:
