@@ -70,6 +70,16 @@ class IsStaffOrAdmin(permissions.BasePermission):
         return request.user.role in ['staff', 'admin', 'management']
 
 
+class IsManagementOrAdmin(permissions.BasePermission):
+    """Custom permission to only allow management or admins to create announcements"""
+
+    def has_permission(self, request, view):
+        """Check if user is management or admin"""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return request.user.role in ['management', 'admin']
+
+
 class UserViewSet(viewsets.ModelViewSet):
     """ViewSet for User model"""
     queryset = User.objects.all()
@@ -339,7 +349,11 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+        return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
+
+    def perform_create(self, serializer):
+        """Set the created_by field to the current user when creating announcements"""
+        serializer.save(created_by=self.request.user)
 
 
 class AttendanceViewSet(viewsets.ModelViewSet):
