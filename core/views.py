@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
-from django.db.models import Q, Count, Sum
+from django.db.models import Q, Count, Sum, Exists, OuterRef
 from django.utils import timezone
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
@@ -251,17 +251,40 @@ class ResultViewSet(viewsets.ModelViewSet):
             except:
                 return Result.objects.none()
         elif user.role == 'student':
-            # Students can see their own results
+            # Students can see their own results only if fees are paid for that term/academic year
             try:
                 student_profile = user.student_profile
-                return Result.objects.filter(student=student_profile)
+                # Only return results where there's a corresponding paid fee payment
+                return Result.objects.filter(
+                    student=student_profile
+                ).filter(
+                    Exists(
+                        FeePayment.objects.filter(
+                            student=OuterRef('student'),
+                            academic_year=OuterRef('academic_year'),
+                            term=OuterRef('term'),
+                            status='paid'
+                        )
+                    )
+                )
             except:
                 return Result.objects.none()
         elif user.role == 'parent':
-            # Parents can see their children's results
+            # Parents can see their children's results only if fees are paid for that term/academic year
             try:
                 parent_profile = user.parent_profile
-                return Result.objects.filter(student__in=parent_profile.children.all())
+                return Result.objects.filter(
+                    student__in=parent_profile.children.all()
+                ).filter(
+                    Exists(
+                        FeePayment.objects.filter(
+                            student=OuterRef('student'),
+                            academic_year=OuterRef('academic_year'),
+                            term=OuterRef('term'),
+                            status='paid'
+                        )
+                    )
+                )
             except:
                 return Result.objects.none()
         return Result.objects.none()
