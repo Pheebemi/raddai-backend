@@ -251,40 +251,17 @@ class ResultViewSet(viewsets.ModelViewSet):
             except:
                 return Result.objects.none()
         elif user.role == 'student':
-            # Students can see their own results only if fees are paid for that term/academic year
+            # Students can see their own results
             try:
                 student_profile = user.student_profile
-                # Only return results where there's a corresponding paid fee payment
-                return Result.objects.filter(
-                    student=student_profile
-                ).filter(
-                    Exists(
-                        FeePayment.objects.filter(
-                            student=OuterRef('student'),
-                            academic_year=OuterRef('academic_year'),
-                            term=OuterRef('term'),
-                            status='paid'
-                        )
-                    )
-                )
+                return Result.objects.filter(student=student_profile)
             except:
                 return Result.objects.none()
         elif user.role == 'parent':
-            # Parents can see their children's results only if fees are paid for that term/academic year
+            # Parents can see their children's results
             try:
                 parent_profile = user.parent_profile
-                return Result.objects.filter(
-                    student__in=parent_profile.children.all()
-                ).filter(
-                    Exists(
-                        FeePayment.objects.filter(
-                            student=OuterRef('student'),
-                            academic_year=OuterRef('academic_year'),
-                            term=OuterRef('term'),
-                            status='paid'
-                        )
-                    )
-                )
+                return Result.objects.filter(student__in=parent_profile.children.all())
             except:
                 return Result.objects.none()
         return Result.objects.none()

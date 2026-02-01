@@ -191,12 +191,13 @@ class ResultSerializer(serializers.ModelSerializer):
     uploaded_by_name = serializers.SerializerMethodField()
     ca_total = serializers.ReadOnlyField()
     percentage = serializers.ReadOnlyField()
+    payment_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Result
         fields = [
             'id', 'student', 'student_name', 'subject', 'subject_name',
-            'academic_year', 'academic_year_name', 'term',
+            'academic_year', 'academic_year_name', 'term', 'payment_status',
             'ca1_score', 'ca2_score', 'ca3_score', 'ca4_score', 'ca_total',
             'exam_score', 'marks_obtained', 'total_marks', 'percentage',
             'grade', 'remarks', 'uploaded_by', 'uploaded_by_name', 'upload_date'
@@ -207,6 +208,16 @@ class ResultSerializer(serializers.ModelSerializer):
         if obj.uploaded_by:
             return obj.uploaded_by.user.get_full_name()
         return None
+
+    def get_payment_status(self, obj):
+        """Check if fees are paid for this result's term and academic year"""
+        from .models import FeePayment
+        return FeePayment.objects.filter(
+            student=obj.student,
+            academic_year=obj.academic_year,
+            term=obj.term,
+            status='paid'
+        ).exists()
 
     def validate_ca1_score(self, value):
         if value < 0 or value > 10:
