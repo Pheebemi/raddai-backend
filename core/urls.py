@@ -27,4 +27,7 @@ urlpatterns = [
 
     # Dashboard endpoints
     path('dashboard/stats/', views.dashboard_stats, name='dashboard-stats'),
+
+    # Rankings endpoints
+    path('rankings/class/', views.get_class_rankings, name='class_rankings'),
 ]

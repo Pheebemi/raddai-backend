@@ -399,6 +399,167 @@ def login_view(request):
 # Dashboard views for different user roles
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
+def get_class_rankings(request):
+    """Get student rankings for a specific class, term, and academic year"""
+    class_id = request.GET.get('class_id')
+    term = request.GET.get('term')
+    academic_year = request.GET.get('academic_year')
+
+    print(f"Rankings request: class_id={class_id}, term={term}, academic_year={academic_year}")
+
+    if not all([class_id, term, academic_year]):
+        return Response(
+            {'error': 'class_id, term, and academic_year are required parameters'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        # Validate inputs
+        try:
+            class_id_int = int(class_id)
+            academic_year_int = int(academic_year)
+        except ValueError:
+            return Response(
+                {'error': 'class_id and academic_year must be valid integers'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate term
+        if term not in ['first', 'second', 'third']:
+            return Response(
+                {'error': 'term must be one of: first, second, third'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if class exists
+        if not Class.objects.filter(id=class_id_int).exists():
+            return Response(
+                {'error': f'Class with id {class_id} does not exist'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if academic year exists
+        if not AcademicYear.objects.filter(id=academic_year_int).exists():
+            return Response(
+                {'error': f'Academic year with id {academic_year} does not exist'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Get all results for this class, term, and academic year
+        results = Result.objects.filter(
+            student__current_class_id=class_id_int,
+            term=term,
+            academic_year_id=academic_year_int
+        ).select_related('student', 'subject', 'academic_year')
+
+        print(f"Found {len(results)} results for class_id={class_id_int}, term={term}, academic_year={academic_year_int}")
+
+        # Debug: Check if there are any students in this class
+        class_students = Student.objects.filter(current_class_id=class_id_int)
+        print(f"Class has {len(class_students)} students total")
+
+        # Debug: Check if there are any results for this class at all
+        all_class_results = Result.objects.filter(student__current_class_id=class_id_int)
+        print(f"Class has {len(all_class_results)} results total across all terms/years")
+
+        if not results:
+            return Response({
+                'rankings': [],
+                'message': 'No results found for the specified criteria',
+                'total_students': 0,
+                'class_info': {
+                    'class_id': class_id,
+                    'term': term,
+                    'academic_year': academic_year
+                }
+            })
+
+        # Group results by student and calculate cumulative average
+        student_averages = {}
+
+        for result in results:
+            student_id = result.student.id
+            student_name = result.student.user.get_full_name()
+
+            if student_id not in student_averages:
+                student_averages[student_id] = {
+                    'student_id': student_id,
+                    'student_name': student_name,
+                    'total_weighted_score': 0,
+                    'total_max_score': 0,
+                    'subject_count': 0,
+                    'subjects': []
+                }
+
+            # Add subject result
+            subject_data = {
+                'subject_name': result.subject.name,
+                'ca_total': result.ca_total,
+                'exam_score': result.exam_score,
+                'marks_obtained': result.marks_obtained,
+                'total_marks': result.total_marks,
+                'percentage': result.percentage,
+                'grade': result.grade
+            }
+
+            student_averages[student_id]['subjects'].append(subject_data)
+            student_averages[student_id]['total_weighted_score'] += result.marks_obtained
+            student_averages[student_id]['total_max_score'] += result.total_marks
+            student_averages[student_id]['subject_count'] += 1
+
+        print(f"Processed {len(student_averages)} students")
+
+        # Calculate average percentage for each student
+        rankings_list = []
+        for student_data in student_averages.values():
+            if student_data['total_max_score'] > 0:
+                average_percentage = (student_data['total_weighted_score'] / student_data['total_max_score']) * 100
+                student_data['average_percentage'] = round(average_percentage, 2)
+                rankings_list.append(student_data)
+            else:
+                student_data['average_percentage'] = 0.0
+                rankings_list.append(student_data)
+
+        # Sort by average percentage descending
+        rankings_list.sort(key=lambda x: x['average_percentage'], reverse=True)
+
+        print(f"Generated rankings for {len(rankings_list)} students")
+
+        # Assign positions, handling ties
+        current_position = 1
+        previous_percentage = None
+
+        for i, student in enumerate(rankings_list):
+            if previous_percentage is not None and student['average_percentage'] < previous_percentage:
+                current_position = i + 1
+
+            student['position'] = current_position
+            previous_percentage = student['average_percentage']
+
+        print("Rankings calculation completed successfully")
+
+        return Response({
+            'rankings': rankings_list,
+            'total_students': len(rankings_list),
+            'class_info': {
+                'class_id': class_id,
+                'term': term,
+                'academic_year': academic_year
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"Error in get_class_rankings: {str(e)}")
+        print(traceback.format_exc())
+        return Response(
+            {'error': f'Failed to calculate rankings: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def dashboard_stats(request):
     """Get dashboard statistics based on user role"""
     user = request.user
