@@ -567,12 +567,64 @@ def dashboard_stats(request):
 
     if user.role == 'management':
         # School-wide statistics
+        # Calculate revenue from paid fee payments
+        total_revenue = FeePayment.objects.filter(status='paid').aggregate(
+            total=Sum('total_amount')
+        )['total'] or 0
+
+        # Calculate pending fees
+        pending_fees = FeePayment.objects.filter(status__in=['pending', 'overdue']).aggregate(
+            total=Sum('total_amount')
+        )['total'] or 0
+
+        # Get top performers (students with highest average grades)
+        top_performers = []
+        # This would require complex aggregation - for now, get recent high-grade results
+        recent_high_results = Result.objects.filter(
+            grade__in=['A+', 'A', 'A-']
+        ).select_related('student__user').order_by('-upload_date')[:3]
+
+        for result in recent_high_results:
+            top_performers.append({
+                'id': result.student.id,
+                'name': result.student.user.get_full_name(),
+                'class': result.student.current_class.name if result.student.current_class else 'N/A',
+                'grade': result.grade
+            })
+
+        # Get recent results
+        recent_results = Result.objects.select_related(
+            'student__user', 'uploaded_by__user', 'subject'
+        ).order_by('-upload_date')[:5]
+
+        recent_results_data = []
+        for result in recent_results:
+            recent_results_data.append({
+                'id': result.id,
+                'student_name': result.student.user.get_full_name(),
+                'subject_name': result.subject.name,
+                'grade': result.grade,
+                'marks_obtained': result.marks_obtained,
+                'total_marks': result.total_marks,
+                'term': result.term,
+                'academic_year': result.academic_year.name,
+                'uploaded_by': result.uploaded_by.user.get_full_name() if result.uploaded_by else 'System'
+            })
+
+        # Calculate average attendance (placeholder for now)
+        average_attendance = 85  # This would need Attendance model data
+
         stats = {
             'total_students': Student.objects.count(),
             'total_staff': Staff.objects.count(),
             'total_parents': Parent.objects.count(),
             'total_classes': Class.objects.count(),
             'total_subjects': Subject.objects.count(),
+            'total_revenue': float(total_revenue),
+            'pending_fees': float(pending_fees),
+            'average_attendance': average_attendance,
+            'top_performers': top_performers,
+            'recent_results': recent_results_data,
             'pending_fee_payments': FeePayment.objects.filter(status='pending').count(),
             'recent_announcements': Announcement.objects.filter(
                 is_active=True, for_management=True
