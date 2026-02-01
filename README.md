@@ -1,6 +1,6 @@
-# School Management System - Django REST API Backend
+# Raddai Metropolitan School - Django REST API Backend
 
-A comprehensive Django REST API backend for a school management system supporting multiple user roles with JWT authentication.
+A comprehensive Django REST API backend for Raddai Metropolitan School management system supporting multiple user roles with JWT authentication.
 
 ## Features
 
@@ -275,4 +275,4 @@ The API is designed to work seamlessly with the Next.js frontend:
 
 ## License
 
-This project is part of the School Management System and follows the same licensing terms as the main project.
+This project is part of the Raddai Metropolitan School Management System and follows the same licensing terms as the main project.
