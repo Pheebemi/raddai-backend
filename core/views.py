@@ -323,6 +323,98 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
                 return FeePayment.objects.none()
         return FeePayment.objects.none()
 
+    def create(self, request, *args, **kwargs):
+        """
+        Support part payments per term.
+
+        For each (student, academic_year, term) we keep a single FeePayment row and
+        accumulate `amount_paid` on it. `total_amount` represents the full fee for
+        that term. Status rules:
+        - amount_paid == 0            -> pending
+        - 0 < amount_paid < total     -> partial
+        - amount_paid >= total        -> paid
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        student = data.get('student')
+        academic_year = data.get('academic_year')
+        term = data.get('term')
+        fee_structure = data.get('fee_structure')
+        incoming_amount = data.get('amount_paid') or 0
+
+        # Determine the full term fee amount from fee_structure or payload
+        full_amount = None
+        if fee_structure and getattr(fee_structure, 'amount', None) is not None:
+            full_amount = fee_structure.amount
+        else:
+            full_amount = data.get('total_amount') or incoming_amount
+
+        existing = FeePayment.objects.filter(
+            student=student,
+            academic_year=academic_year,
+            term=term
+        ).first()
+
+        if existing:
+            # Accumulate amount_paid on the existing record
+            new_amount_paid = (existing.amount_paid or 0) + incoming_amount
+            # Cap at full_amount to avoid over-payment in records
+            if full_amount:
+                new_amount_paid = min(new_amount_paid, full_amount)
+
+            existing.amount_paid = new_amount_paid
+            # Keep or set total_amount as the full required amount
+            if full_amount:
+                existing.total_amount = full_amount
+
+            # Update helpful audit fields from the latest payment
+            existing.payment_method = data.get('payment_method') or existing.payment_method
+            existing.transaction_id = data.get('transaction_id') or existing.transaction_id
+            existing.remarks = data.get('remarks') or existing.remarks
+            existing.due_date = data.get('due_date') or existing.due_date
+
+            # Compute status
+            if full_amount and new_amount_paid >= full_amount:
+                existing.status = FeePayment.PaymentStatus.PAID
+            elif new_amount_paid > 0:
+                existing.status = FeePayment.PaymentStatus.PARTIAL
+            else:
+                existing.status = FeePayment.PaymentStatus.PENDING
+
+            existing.save()
+            output_serializer = self.get_serializer(existing)
+            return Response(output_serializer.data, status=status.HTTP_200_OK)
+
+        # No existing record -> create a new one and set status based on first payment
+        total_amount = full_amount or incoming_amount
+        amount_paid = min(incoming_amount, total_amount)
+
+        if total_amount and amount_paid >= total_amount:
+            status_value = FeePayment.PaymentStatus.PAID
+        elif amount_paid > 0:
+            status_value = FeePayment.PaymentStatus.PARTIAL
+        else:
+            status_value = FeePayment.PaymentStatus.PENDING
+
+        fee_payment = FeePayment.objects.create(
+            student=student,
+            fee_structure=fee_structure,
+            academic_year=academic_year,
+            term=term,
+            amount_paid=amount_paid,
+            total_amount=total_amount,
+            due_date=data.get('due_date'),
+            status=status_value,
+            payment_method=data.get('payment_method', ''),
+            transaction_id=data.get('transaction_id', ''),
+            remarks=data.get('remarks', ''),
+        )
+
+        output_serializer = self.get_serializer(fee_payment)
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+
 
 class AnnouncementViewSet(viewsets.ModelViewSet):
     """ViewSet for Announcement model"""
@@ -688,16 +780,60 @@ def dashboard_stats(request):
     elif user.role == 'student':
         try:
             student_profile = user.student_profile
+
+            # Current class name
+            current_class_name = (
+                student_profile.current_class.name if student_profile.current_class else None
+            )
+
+            # Determine the relevant academic year (active or latest)
+            academic_year = (
+                AcademicYear.objects.filter(is_active=True).first()
+                or AcademicYear.objects.order_by('-start_date').first()
+            )
+
+            session_pending_fees = 0
+
+            if academic_year and student_profile.current_class:
+                # We treat the tuition fee defined in FeeStructure for this grade + year
+                # as the per-term fee, then multiply by 3 terms for the session total.
+                grade = student_profile.current_class.grade
+
+                tuition_qs = FeeStructure.objects.filter(
+                    academic_year=academic_year,
+                    grade=grade,
+                    fee_type=FeeStructure.FeeType.TUITION,
+                )
+
+                per_term_fee = tuition_qs.aggregate(total=Sum('amount'))['total'] or 0
+
+                # Total expected for the whole academic session (3 terms)
+                session_total_fee = per_term_fee * 3
+
+                # Total actually paid by this student for this academic year (all terms)
+                paid_agg = FeePayment.objects.filter(
+                    student=student_profile,
+                    academic_year=academic_year,
+                ).aggregate(total=Sum('amount_paid'))
+
+                total_paid = paid_agg['total'] or 0
+
+                # Pending amount = expected session fee minus all payments made (never negative)
+                raw_pending = session_total_fee - total_paid
+                if raw_pending < 0:
+                    raw_pending = 0
+
+                session_pending_fees = float(raw_pending)
+
             stats = {
-                'current_class': student_profile.current_class.name if student_profile.current_class else None,
+                'current_class': current_class_name,
                 'total_results': Result.objects.filter(student=student_profile).count(),
-                'pending_fees': FeePayment.objects.filter(
-                    student=student_profile, status='pending'
-                ).count(),
+                # Monetary pending fees for the current/active academic session
+                'pending_fees': session_pending_fees,
                 'attendance_percentage': 0,  # Would need calculation
                 'recent_announcements': Announcement.objects.filter(
                     is_active=True, for_students=True
-                ).order_by('-created_at')[:5].count()
+                ).order_by('-created_at')[:5].count(),
             }
         except:
             stats = {'error': 'Student profile not found'}

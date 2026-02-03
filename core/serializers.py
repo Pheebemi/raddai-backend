@@ -263,6 +263,10 @@ class FeePaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = FeePayment
         fields = '__all__'
+        # Disable DRF's automatic UniqueTogetherValidator so we can
+        # handle cumulative part-payments per (student, academic_year, term)
+        # in the view logic without serializer-level 400 errors.
+        validators = []
 
 
 class AnnouncementSerializer(serializers.ModelSerializer):
