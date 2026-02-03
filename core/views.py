@@ -344,12 +344,45 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         fee_structure = data.get('fee_structure')
         incoming_amount = data.get('amount_paid') or 0
 
-        # Determine the full term fee amount from fee_structure or payload
+        print(f"📥 Payment request data: student={student}, academic_year={academic_year}, term={term}, fee_structure={fee_structure}, incoming_amount={incoming_amount}")
+
+        # Always determine the full term fee from the student's actual class grade
+        # and academic year, so each class uses its own configured fee even if an
+        # old/wrong fee_structure was saved previously.
+        from .models import FeeStructure as FSModel
+
         full_amount = None
-        if fee_structure and getattr(fee_structure, 'amount', None) is not None:
-            full_amount = fee_structure.amount
-        else:
-            full_amount = data.get('total_amount') or incoming_amount
+        resolved_fee_structure = fee_structure
+
+        try:
+            if student and hasattr(student, 'current_class') and student.current_class and academic_year:
+                grade = student.current_class.grade
+                fs_qs = FSModel.objects.filter(
+                    academic_year=academic_year,
+                    grade=grade,
+                    fee_type=FSModel.FeeType.TUITION,
+                )
+                resolved_fee_structure = fs_qs.first() or fee_structure
+                if resolved_fee_structure and getattr(resolved_fee_structure, 'amount', None) is not None:
+                    full_amount = resolved_fee_structure.amount
+                    print(f"📋 Using grade-based fee_structure.amount: {full_amount} for grade={grade}, academic_year={academic_year.id}, fee_structure_id={resolved_fee_structure.id}")
+
+        except Exception as e:
+            print(f"⚠️ Failed to resolve grade-based fee_structure: {e}")
+
+        # Fallbacks if we still don't have a full_amount
+        if full_amount is None:
+            if resolved_fee_structure and hasattr(resolved_fee_structure, 'amount') and resolved_fee_structure.amount is not None:
+                full_amount = resolved_fee_structure.amount
+                print(f"📋 Fallback to resolved_fee_structure.amount: {full_amount} for fee_structure {resolved_fee_structure.id}")
+            else:
+                full_amount = data.get('total_amount') or incoming_amount
+                print(f"📋 Fallback to payload total_amount or incoming_amount: {full_amount}")
+
+        # Always work with the resolved fee_structure (grade-correct if found)
+        fee_structure = resolved_fee_structure
+
+        print(f"💰 Payment processing: student={getattr(student, 'id', None)}, term={term}, academic_year={getattr(academic_year, 'id', None)}, incoming_amount={incoming_amount}, full_amount={full_amount}, fee_structure_id={getattr(fee_structure, 'id', None)}")
 
         existing = FeePayment.objects.filter(
             student=student,
@@ -376,14 +409,19 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
             existing.due_date = data.get('due_date') or existing.due_date
 
             # Compute status
+            print(f"📊 Status calculation: full_amount={full_amount}, new_amount_paid={new_amount_paid}, condition={full_amount and new_amount_paid >= full_amount}")
             if full_amount and new_amount_paid >= full_amount:
                 existing.status = FeePayment.PaymentStatus.PAID
+                print(f"✅ Status set to PAID")
             elif new_amount_paid > 0:
                 existing.status = FeePayment.PaymentStatus.PARTIAL
+                print(f"⚠️ Status set to PARTIAL")
             else:
                 existing.status = FeePayment.PaymentStatus.PENDING
+                print(f"⏳ Status set to PENDING")
 
             existing.save()
+            print(f"💾 Payment saved with status: {existing.status}")
             output_serializer = self.get_serializer(existing)
             return Response(output_serializer.data, status=status.HTTP_200_OK)
 
@@ -391,12 +429,16 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         total_amount = full_amount or incoming_amount
         amount_paid = min(incoming_amount, total_amount)
 
+        print(f"🆕 Creating new payment: total_amount={total_amount}, amount_paid={amount_paid}, condition={total_amount and amount_paid >= total_amount}")
         if total_amount and amount_paid >= total_amount:
             status_value = FeePayment.PaymentStatus.PAID
+            print(f"✅ New payment status: PAID")
         elif amount_paid > 0:
             status_value = FeePayment.PaymentStatus.PARTIAL
+            print(f"⚠️ New payment status: PARTIAL")
         else:
             status_value = FeePayment.PaymentStatus.PENDING
+            print(f"⏳ New payment status: PENDING")
 
         fee_payment = FeePayment.objects.create(
             student=student,
