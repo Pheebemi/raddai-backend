@@ -19,7 +19,8 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id']
         extra_kwargs = {
-            'password': {'write_only': True}
+            'password': {'write_only': True},
+            'email': {'required': False},  # Email is optional
         }
 
     def get_full_name(self, obj):

@@ -86,6 +86,12 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
+    def get_permissions(self):
+        """Allow management and admin to create users, others can only access their own data"""
+        if self.action == 'create':
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
+
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin' or user.role == 'management':
@@ -170,6 +176,12 @@ class StudentViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+
+    def get_permissions(self):
+        """Allow management and admin to create students"""
+        if self.action == 'create':
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
     def get_queryset(self):
         user = self.request.user

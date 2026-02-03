@@ -4,6 +4,11 @@ from django.core.validators import RegexValidator
 from django.utils import timezone
 
 
+def get_today():
+    """Return today's date"""
+    return timezone.now().date()
+
+
 class User(AbstractUser):
     """Custom user model with role-based authentication"""
 
@@ -96,7 +101,7 @@ class Student(models.Model):
     """Student profile model"""
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     student_id = models.CharField(max_length=20, unique=True)
-    admission_date = models.DateField(default=timezone.now)
+    admission_date = models.DateField(default=get_today)
     current_class = models.ForeignKey(Class, on_delete=models.SET_NULL, null=True, related_name='students')
     emergency_contact_name = models.CharField(max_length=100, blank=True)
     emergency_contact_phone = models.CharField(max_length=15, blank=True)
