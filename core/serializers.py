@@ -15,11 +15,13 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name', 'full_name',
-            'role', 'phone_number', 'date_of_birth', 'address', 'profile'
+            'role', 'phone_number', 'date_of_birth', 'address', 'profile',
+            'password',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'full_name', 'profile']
         extra_kwargs = {
-            'password': {'write_only': True},
+            # Password is write-only. Frontend sends it on create; on update it's optional.
+            'password': {'write_only': True, 'required': False},
             'email': {'required': False},  # Email is optional
         }
 
