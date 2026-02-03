@@ -33,6 +33,7 @@ class UserSerializer(serializers.ModelSerializer):
                     'id': profile.id,
                     'student_id': profile.student_id,
                     'current_class': profile.current_class.name if profile.current_class else None,
+                    'current_class_id': profile.current_class.id if profile.current_class else None,
                     'admission_date': profile.admission_date,
                 }
             elif obj.role == 'staff':
