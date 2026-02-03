@@ -333,7 +333,71 @@ class ResultViewSet(viewsets.ModelViewSet):
         # Only staff can create/update results
         elif self.action in ['create', 'update', 'partial_update']:
             return [permissions.IsAuthenticated(), IsStaffOrAdmin()]
+        elif self.action == 'export_results':
+            return [permissions.IsAuthenticated(), IsStaffOrAdmin()]
         return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+
+    @action(detail=False, methods=['get'], url_path='export')
+    def export_results(self, request):
+        """
+        Export all results that this staff member can access as CSV.
+        Staff can access results they uploaded or for students they teach.
+        """
+        user = request.user
+        if user.role not in ['staff', 'admin', 'management']:
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get the results this user can access
+        queryset = self.get_queryset()
+
+        # Optional filters
+        class_id = request.query_params.get('class_id')
+        term = request.query_params.get('term')
+        academic_year = request.query_params.get('academic_year')
+
+        if class_id:
+            queryset = queryset.filter(student__current_class=class_id)
+        if term:
+            queryset = queryset.filter(term=term)
+        if academic_year:
+            queryset = queryset.filter(academic_year=academic_year)
+
+        # Generate CSV
+        import csv
+        from django.http import HttpResponse
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="results_export.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Student ID', 'Student Name', 'Class', 'Subject', 'Term', 'Academic Year',
+            'CA1 Score', 'CA2 Score', 'CA3 Score', 'CA4 Score', 'CA Total',
+            'Exam Score', 'Total Marks', 'Percentage', 'Grade', 'Remarks', 'Uploaded By'
+        ])
+
+        for result in queryset.select_related('student__user', 'subject', 'academic_year', 'uploaded_by__user'):
+            writer.writerow([
+                result.student.student_id,
+                result.student.user.get_full_name(),
+                result.student.current_class.name if result.student.current_class else '',
+                result.subject.name,
+                result.term,
+                result.academic_year.name,
+                result.ca1_score,
+                result.ca2_score,
+                result.ca3_score,
+                result.ca4_score,
+                result.ca_total,
+                result.exam_score,
+                result.marks_obtained,
+                result.percentage,
+                result.grade,
+                result.remarks or '',
+                result.uploaded_by.user.get_full_name() if result.uploaded_by else ''
+            ])
+
+        return response
 
 
 class FeeStructureViewSet(viewsets.ModelViewSet):
