@@ -215,6 +215,12 @@ class StaffViewSet(viewsets.ModelViewSet):
     serializer_class = StaffSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
+    def get_permissions(self):
+        """Allow management and admin to create staff"""
+        if self.action == 'create':
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
+
     def get_queryset(self):
         user = self.request.user
         if user.role in ['admin', 'management']:
