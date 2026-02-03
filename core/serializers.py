@@ -154,9 +154,22 @@ class StaffSerializer(serializers.ModelSerializer):
         return obj.subjects.count()
 
     def get_assigned_classes(self, obj):
-        # Since class_teacher is OneToOne, return array with single class or empty array
-        if obj.class_teacher:
-            return [ClassSerializer(obj.class_teacher).data]
+        """
+        Return classes this staff is assigned to.
+
+        - If `class_teacher` OneToOne exists, wrap it in a list.
+        - If there is no related class, return an empty list instead of raising.
+        """
+        # Safely handle when class_teacher relation does not exist
+        if not hasattr(obj, "class_teacher"):
+            return []
+
+        try:
+            if obj.class_teacher:
+                return [ClassSerializer(obj.class_teacher).data]
+        except Staff.class_teacher.RelatedObjectDoesNotExist:  # type: ignore[attr-defined]
+            return []
+
         return []
 
     def __init__(self, *args, **kwargs):
