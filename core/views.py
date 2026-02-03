@@ -232,6 +232,39 @@ class StaffViewSet(viewsets.ModelViewSet):
             except:
                 return Staff.objects.none()
 
+    @action(detail=True, methods=['post'], url_path='assign-class')
+    def assign_class(self, request, pk=None):
+        """
+        Assign or unassign this staff member as class teacher for a class.
+
+        Expects:
+        - class_id: ID of the class to assign as class teacher
+          If null/empty, unassigns the staff from any class.
+        """
+        staff = self.get_object()
+        class_id = request.data.get('class_id')
+
+        # Unassign from all classes if no class_id provided
+        if not class_id:
+            Class.objects.filter(class_teacher=staff).update(class_teacher=None)
+            serializer = self.get_serializer(staff)
+            return Response(serializer.data)
+
+        try:
+            target_class = Class.objects.get(pk=class_id)
+        except Class.DoesNotExist:
+            return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ensure this staff is class teacher for at most one class:
+        # clear previous assignments on other classes
+        Class.objects.filter(class_teacher=staff).exclude(pk=target_class.pk).update(class_teacher=None)
+
+        target_class.class_teacher = staff
+        target_class.save()
+
+        serializer = self.get_serializer(staff)
+        return Response(serializer.data)
+
 
 class ParentViewSet(viewsets.ModelViewSet):
     """ViewSet for Parent model"""
