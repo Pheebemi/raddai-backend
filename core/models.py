@@ -287,6 +287,40 @@ class FeePayment(models.Model):
         return f"{self.student} - {self.fee_structure.fee_type} ({self.status})"
 
 
+class StaffSalary(models.Model):
+    """Salary record for staff per academic year and month"""
+
+    class Month(models.IntegerChoices):
+        JANUARY = 1, 'January'
+        FEBRUARY = 2, 'February'
+        MARCH = 3, 'March'
+        APRIL = 4, 'April'
+        MAY = 5, 'May'
+        JUNE = 6, 'June'
+        JULY = 7, 'July'
+        AUGUST = 8, 'August'
+        SEPTEMBER = 9, 'September'
+        OCTOBER = 10, 'October'
+        NOVEMBER = 11, 'November'
+        DECEMBER = 12, 'December'
+
+    staff = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='salaries')
+    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name='staff_salaries')
+    month = models.PositiveSmallIntegerField(choices=Month.choices)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    paid_date = models.DateField(default=get_today)
+    voucher_number = models.CharField(max_length=50, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['staff', 'academic_year', 'month']
+        ordering = ['-paid_date', 'staff__user__last_name']
+
+    def __str__(self):
+        return f"{self.staff.user.get_full_name()} - {self.get_month_display()} {self.academic_year}: {self.amount}"
+
+
 class Announcement(models.Model):
     """School announcements"""
 

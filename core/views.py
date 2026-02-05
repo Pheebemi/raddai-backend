@@ -7,13 +7,13 @@ from django.db.models import Q, Count, Sum, Exists, OuterRef
 from django.utils import timezone
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
-    Result, FeeStructure, FeePayment, Announcement, Attendance
+    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance
 )
 from .serializers import (
     UserSerializer, LoginSerializer, AcademicYearSerializer,
     ClassSerializer, SubjectSerializer, StudentSerializer,
     StaffSerializer, ParentSerializer, ResultSerializer,
-    FeeStructureSerializer, FeePaymentSerializer,
+    FeeStructureSerializer, FeePaymentSerializer, StaffSalarySerializer,
     AnnouncementSerializer, AttendanceSerializer
 )
 
@@ -609,6 +609,27 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
 
         output_serializer = self.get_serializer(fee_payment)
         return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class StaffSalaryViewSet(viewsets.ModelViewSet):
+    """ViewSet for StaffSalary model"""
+    queryset = StaffSalary.objects.select_related('staff__user', 'academic_year').all()
+    serializer_class = StaffSalarySerializer
+    permission_classes = [IsManagementOrAdmin]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        academic_year = self.request.query_params.get('academic_year')
+        month = self.request.query_params.get('month')
+        staff_id = self.request.query_params.get('staff')
+
+        if academic_year:
+            qs = qs.filter(academic_year_id=academic_year)
+        if month:
+            qs = qs.filter(month=month)
+        if staff_id:
+            qs = qs.filter(staff_id=staff_id)
+        return qs
 
 
 class AnnouncementViewSet(viewsets.ModelViewSet):

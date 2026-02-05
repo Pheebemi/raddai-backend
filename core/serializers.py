@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
-    Result, FeeStructure, FeePayment, Announcement, Attendance
+    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance
 )
 
 
@@ -317,6 +317,18 @@ class FeePaymentSerializer(serializers.ModelSerializer):
         # handle cumulative part-payments per (student, academic_year, term)
         # in the view logic without serializer-level 400 errors.
         validators = []
+
+
+class StaffSalarySerializer(serializers.ModelSerializer):
+    """Serializer for StaffSalary model"""
+    staff_name = serializers.CharField(source='staff.user.get_full_name', read_only=True)
+    staff_staff_id = serializers.CharField(source='staff.staff_id', read_only=True)
+    academic_year_name = serializers.CharField(source='academic_year.name', read_only=True)
+    month_display = serializers.CharField(source='get_month_display', read_only=True)
+
+    class Meta:
+        model = StaffSalary
+        fields = '__all__'
 
 
 class AnnouncementSerializer(serializers.ModelSerializer):

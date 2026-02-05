@@ -14,6 +14,7 @@ router.register(r'parents', views.ParentViewSet)
 router.register(r'results', views.ResultViewSet)
 router.register(r'fee-structures', views.FeeStructureViewSet)
 router.register(r'fee-payments', views.FeePaymentViewSet)
+router.register(r'staff-salaries', views.StaffSalaryViewSet)
 router.register(r'announcements', views.AnnouncementViewSet)
 router.register(r'attendance', views.AttendanceViewSet)
 
