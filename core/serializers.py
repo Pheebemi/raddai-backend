@@ -202,7 +202,7 @@ class ParentSerializer(serializers.ModelSerializer):
 
 class ResultSerializer(serializers.ModelSerializer):
     """Serializer for Result model"""
-    student_name = serializers.CharField(source='student.user.get_full_name', read_only=True)
+    student_name = serializers.SerializerMethodField()
     subject_name = serializers.CharField(source='subject.name', read_only=True)
     academic_year_name = serializers.CharField(source='academic_year.name', read_only=True)
     uploaded_by_name = serializers.SerializerMethodField()
@@ -228,6 +228,18 @@ class ResultSerializer(serializers.ModelSerializer):
         if obj.uploaded_by:
             return obj.uploaded_by.user.get_full_name()
         return None
+
+    def get_student_name(self, obj):
+        """Get the student's full name"""
+        try:
+            user = obj.student.user
+            first_name = user.first_name or ''
+            last_name = user.last_name or ''
+            if first_name or last_name:
+                return f"{first_name} {last_name}".strip()
+            return user.username
+        except:
+            return f"Student {obj.student.id}"
 
     def get_payment_status(self, obj):
         """Check if fees are paid for this result's term and academic year"""
