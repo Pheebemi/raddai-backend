@@ -216,8 +216,8 @@ class ResultSerializer(serializers.ModelSerializer):
         model = Result
         fields = [
             'id', 'student', 'student_name', 'subject', 'subject_name',
-            'academic_year', 'academic_year_name', 'term', 'payment_status',
-            'class_name', 'class_id',
+            'academic_year', 'academic_year_name', 'term', 'recorded_class',
+            'payment_status', 'class_name', 'class_id',
             'ca1_score', 'ca2_score', 'ca3_score', 'ca4_score', 'ca_total',
             'exam_score', 'marks_obtained', 'total_marks', 'percentage',
             'grade', 'remarks', 'uploaded_by', 'uploaded_by_name', 'upload_date'
@@ -253,13 +253,19 @@ class ResultSerializer(serializers.ModelSerializer):
 
     def get_class_name(self, obj):
         """Get the class name for this result"""
-        if obj.student.current_class:
+        if obj.recorded_class:
+            return obj.recorded_class.name
+        # Fallback to student's current class for existing records
+        elif obj.student.current_class:
             return obj.student.current_class.name
         return None
 
     def get_class_id(self, obj):
         """Get the class ID for this result"""
-        if obj.student.current_class:
+        if obj.recorded_class:
+            return str(obj.recorded_class.id)
+        # Fallback to student's current class for existing records
+        elif obj.student.current_class:
             return str(obj.student.current_class.id)
         return None
 

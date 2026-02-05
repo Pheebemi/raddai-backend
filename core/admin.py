@@ -343,14 +343,15 @@ class ParentAdmin(admin.ModelAdmin):
 
 @admin.register(Result)
 class ResultAdmin(admin.ModelAdmin):
-    list_display = ('student', 'subject', 'academic_year', 'term', 'ca_total', 'exam_score', 'marks_obtained', 'grade', 'uploaded_by', 'upload_date')
-    list_filter = ('academic_year', 'term', 'subject', 'grade', 'uploaded_by')
+    list_display = ('student', 'subject', 'recorded_class', 'academic_year', 'term', 'ca_total', 'exam_score', 'marks_obtained', 'grade', 'uploaded_by', 'upload_date')
+    list_filter = ('academic_year', 'term', 'subject', 'grade', 'uploaded_by', 'recorded_class')
     search_fields = ('student__user__first_name', 'student__user__last_name', 'subject__name')
-    raw_id_fields = ('student', 'subject', 'academic_year', 'uploaded_by')
+    raw_id_fields = ('student', 'subject', 'academic_year', 'uploaded_by', 'recorded_class')
 
     fieldsets = (
         ('Student & Subject Information', {
-            'fields': ('student', 'subject', 'academic_year', 'term')
+            'fields': ('student', 'subject', 'recorded_class', 'academic_year', 'term'),
+            'description': 'Select the class the student was in when this result was recorded. This should match the class they were assigned to during this academic year.'
         }),
         ('Continuous Assessment Scores (10 marks each)', {
             'fields': ('ca1_score', 'ca2_score', 'ca3_score', 'ca4_score'),

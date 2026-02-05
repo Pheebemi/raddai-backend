@@ -161,6 +161,7 @@ class Result(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE)
     term = models.CharField(max_length=10, choices=Term.choices)
+    recorded_class = models.ForeignKey(Class, on_delete=models.SET_NULL, null=True, related_name='recorded_results')
 
     # CA Scores (Continuous Assessment) - each worth 10 marks
     ca1_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 1 (max 10 marks)")
