@@ -292,24 +292,53 @@ class ResultViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Set the uploaded_by field to the current staff user when creating results"""
-        if self.request.user.role == 'staff':
-            serializer.save(uploaded_by=self.request.user.staff_profile)
-        else:
-            serializer.save()
+        print(f"Creating result with data: {self.request.data}")
+        try:
+            if self.request.user.role == 'staff':
+                serializer.save(uploaded_by=self.request.user.staff_profile)
+            else:
+                serializer.save()
+            print("Result created successfully")
+        except Exception as e:
+            print(f"Error creating result: {e}")
+            print(f"Request data: {self.request.data}")
+            print(f"User: {self.request.user}")
+            # Try to get more detailed validation errors
+            if hasattr(e, 'detail'):
+                print(f"Validation errors: {e.detail}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def get_queryset(self):
         user = self.request.user
+        print(f"ResultViewSet.get_queryset() called for user: {user} (role: {user.role})")
+
         if user.role == 'admin' or user.role == 'management':
+            print("Returning all results for admin/management")
             return Result.objects.all()
         elif user.role == 'staff':
             # Staff can see results they uploaded or for students they teach
             try:
                 staff_profile = user.staff_profile
-                return Result.objects.filter(
+                print(f"Staff profile: {staff_profile}")
+
+                queryset = Result.objects.filter(
                     Q(uploaded_by=staff_profile) |
                     Q(student__current_class__class_teacher=staff_profile)
                 )
-            except:
+
+                # Debug: show what results this returns
+                results_count = queryset.count()
+                print(f"Staff queryset returns {results_count} results")
+
+                # Show results for the specific case
+                specific_results = queryset.filter(academic_year_id=2, subject_id=1, term='first')
+                print(f"Specific results (Math 2026-2027 first term): {[r.id for r in specific_results]}")
+
+                return queryset
+            except Exception as e:
+                print(f"Error getting staff queryset: {e}")
                 return Result.objects.none()
         elif user.role == 'student':
             # Students can see their own results
@@ -680,17 +709,31 @@ def get_class_rankings(request):
         # Validate inputs
         try:
             class_id_int = int(class_id)
-            academic_year_int = int(academic_year)
         except ValueError:
             return Response(
-                {'error': 'class_id and academic_year must be valid integers'},
+                {'error': 'class_id must be a valid integer'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Handle academic_year - could be ID or name
+        academic_year_obj = None
+        try:
+            academic_year_int = int(academic_year)
+            academic_year_obj = AcademicYear.objects.get(id=academic_year_int)
+        except (ValueError, AcademicYear.DoesNotExist):
+            # Try to find by name
+            try:
+                academic_year_obj = AcademicYear.objects.get(name=academic_year)
+            except AcademicYear.DoesNotExist:
+                return Response(
+                    {'error': 'academic_year must be a valid ID or name'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         # Validate term
-        if term not in ['first', 'second', 'third']:
+        if term not in ['first', 'second', 'third', 'final']:
             return Response(
-                {'error': 'term must be one of: first, second, third'},
+                {'error': 'term must be one of: first, second, third, final'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -701,21 +744,14 @@ def get_class_rankings(request):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Check if academic year exists
-        if not AcademicYear.objects.filter(id=academic_year_int).exists():
-            return Response(
-                {'error': f'Academic year with id {academic_year} does not exist'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
         # Get all results for this class, term, and academic year
         results = Result.objects.filter(
             student__current_class_id=class_id_int,
             term=term,
-            academic_year_id=academic_year_int
+            academic_year=academic_year_obj
         ).select_related('student', 'subject', 'academic_year')
 
-        print(f"Found {len(results)} results for class_id={class_id_int}, term={term}, academic_year={academic_year_int}")
+        print(f"Found {len(results)} results for class_id={class_id_int}, term={term}, academic_year={academic_year_obj.name}")
 
         # Debug: Check if there are any students in this class
         class_students = Student.objects.filter(current_class_id=class_id_int)
@@ -733,7 +769,7 @@ def get_class_rankings(request):
                 'class_info': {
                     'class_id': class_id,
                     'term': term,
-                    'academic_year': academic_year
+                    'academic_year': academic_year_obj.name
                 }
             })
 
@@ -807,7 +843,7 @@ def get_class_rankings(request):
             'class_info': {
                 'class_id': class_id,
                 'term': term,
-                'academic_year': academic_year
+                'academic_year': academic_year_obj.name
             }
         })
 
