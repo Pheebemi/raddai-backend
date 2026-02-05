@@ -747,11 +747,29 @@ def get_class_rankings(request):
             )
 
         # Check if class exists
-        if not Class.objects.filter(id=class_id_int).exists():
+        qs = Class.objects.filter(id=class_id_int)
+        if not qs.exists():
             return Response(
                 {'error': f'Class with id {class_id} does not exist'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        # For staff, ensure they are the class teacher of this class
+        user = request.user
+        if user.role == 'staff':
+            try:
+                staff_profile = user.staff_profile
+            except Exception:
+                return Response(
+                    {'error': 'Staff profile not found for current user'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            if not qs.filter(class_teacher=staff_profile).exists():
+                return Response(
+                    {'error': 'You are not the class teacher for this class'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
         # Get all results for this class, term, and academic year
         results = Result.objects.filter(
