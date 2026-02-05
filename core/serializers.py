@@ -209,12 +209,15 @@ class ResultSerializer(serializers.ModelSerializer):
     ca_total = serializers.ReadOnlyField()
     percentage = serializers.ReadOnlyField()
     payment_status = serializers.SerializerMethodField()
+    class_name = serializers.SerializerMethodField()
+    class_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Result
         fields = [
             'id', 'student', 'student_name', 'subject', 'subject_name',
             'academic_year', 'academic_year_name', 'term', 'payment_status',
+            'class_name', 'class_id',
             'ca1_score', 'ca2_score', 'ca3_score', 'ca4_score', 'ca_total',
             'exam_score', 'marks_obtained', 'total_marks', 'percentage',
             'grade', 'remarks', 'uploaded_by', 'uploaded_by_name', 'upload_date'
@@ -235,6 +238,18 @@ class ResultSerializer(serializers.ModelSerializer):
             term=obj.term,
             status='paid'
         ).exists()
+
+    def get_class_name(self, obj):
+        """Get the class name for this result"""
+        if obj.student.current_class:
+            return obj.student.current_class.name
+        return None
+
+    def get_class_id(self, obj):
+        """Get the class ID for this result"""
+        if obj.student.current_class:
+            return str(obj.student.current_class.id)
+        return None
 
     def validate_ca1_score(self, value):
         if value < 0 or value > 10:
