@@ -391,6 +391,15 @@ class ResultViewSet(viewsets.ModelViewSet):
         if academic_year:
             queryset = queryset.filter(academic_year=academic_year)
 
+        # Order results alphabetically by student name so that each
+        # student's rows are grouped together in the CSV.
+        queryset = queryset.order_by(
+            'student__user__first_name',
+            'student__user__last_name',
+            'student__student_id',
+            'subject__name',
+        )
+
         # Generate CSV
         import csv
         from django.http import HttpResponse
