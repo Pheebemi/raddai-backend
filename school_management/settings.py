@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-gi1l4=h)s%ay%5gj4%#8pz!y^p!!%)q*fwc%b_h4%)ydhow3kw
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -129,12 +129,7 @@ STATIC_URL = 'static/'
 AUTH_USER_MODEL = 'core.User'
 
 # CORS Settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-]
+CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOW_CREDENTIALS = True
 

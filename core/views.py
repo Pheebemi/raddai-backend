@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
-from django.db.models import Q, Count, Sum, Exists, OuterRef
+from django.db.models import Q, Sum
 from django.utils import timezone
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
@@ -19,34 +19,27 @@ from .serializers import (
 
 
 class IsOwnerOrAdmin(permissions.BasePermission):
-    """Custom permission to only allow owners of an object or admins to access it"""
-
     def has_permission(self, request, view):
-        """Check if user has permission to access the view"""
         return request.user and request.user.is_authenticated
 
     def has_object_permission(self, request, view, obj):
         if request.user.role == 'admin' or request.user.role == 'management':
             return True
 
-        # Students can access their own data
         if request.user.role == 'student' and hasattr(obj, 'user'):
             return obj.user == request.user
 
-        # Staff can access their own data and students they teach
         if request.user.role == 'staff':
             if hasattr(obj, 'user') and obj.user == request.user:
                 return True
             if hasattr(obj, 'student'):
-                # Check if staff teaches this student's class/subject
                 try:
                     staff_profile = request.user.staff_profile
                     return (obj.student.current_class and
                            obj.student.current_class.class_teacher == staff_profile)
-                except:
+                except Exception:
                     return False
 
-        # Parents can access their children's data
         if request.user.role == 'parent':
             try:
                 parent_profile = request.user.parent_profile
@@ -54,40 +47,32 @@ class IsOwnerOrAdmin(permissions.BasePermission):
                     return True
                 if hasattr(obj, 'user') and obj.user == request.user:
                     return True
-            except:
+            except Exception:
                 return False
 
         return False
 
 
 class IsStaffOrAdmin(permissions.BasePermission):
-    """Custom permission to only allow staff or admins to create/update results"""
-
     def has_permission(self, request, view):
-        """Check if user is staff or admin"""
         if not request.user or not request.user.is_authenticated:
             return False
         return request.user.role in ['staff', 'admin', 'management']
 
 
 class IsManagementOrAdmin(permissions.BasePermission):
-    """Custom permission to only allow management or admins to create announcements"""
-
     def has_permission(self, request, view):
-        """Check if user is management or admin"""
         if not request.user or not request.user.is_authenticated:
             return False
         return request.user.role in ['management', 'admin']
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    """ViewSet for User model"""
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
     def get_permissions(self):
-        """Allow management and admin to create users, others can only access their own data"""
         if self.action == 'create':
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
@@ -97,37 +82,34 @@ class UserViewSet(viewsets.ModelViewSet):
         if user.role == 'admin' or user.role == 'management':
             return User.objects.all()
         elif user.role == 'staff':
-            # Staff can see students in their classes
             try:
                 staff_profile = user.staff_profile
                 student_ids = []
-                if staff_profile.class_teacher.exists():
-                    for class_obj in staff_profile.class_teacher.all():
-                        student_ids.extend(class_obj.students.values_list('user_id', flat=True))
+                try:
+                    class_obj = staff_profile.class_teacher
+                    student_ids.extend(class_obj.students.values_list('user_id', flat=True))
+                except Exception:
+                    pass
                 return User.objects.filter(Q(id=user.id) | Q(id__in=student_ids))
-            except:
+            except Exception:
                 return User.objects.filter(id=user.id)
         elif user.role == 'parent':
-            # Parents can see themselves and their children
             try:
                 parent_profile = user.parent_profile
                 children_ids = parent_profile.children.values_list('user_id', flat=True)
                 return User.objects.filter(Q(id=user.id) | Q(id__in=children_ids))
-            except:
+            except Exception:
                 return User.objects.filter(id=user.id)
         else:
-            # Students can only see themselves
             return User.objects.filter(id=user.id)
 
     @action(detail=False, methods=['get'])
     def profile(self, request):
-        """Get current user's profile"""
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
     @action(detail=False, methods=['patch'])
     def update_profile(self, request):
-        """Update current user's profile"""
         serializer = self.get_serializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -136,7 +118,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 class AcademicYearViewSet(viewsets.ModelViewSet):
-    """ViewSet for AcademicYear model"""
     queryset = AcademicYear.objects.all()
     serializer_class = AcademicYearSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -144,11 +125,10 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
 
 
 class ClassViewSet(viewsets.ModelViewSet):
-    """ViewSet for Class model"""
     queryset = Class.objects.all()
     serializer_class = ClassSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -156,11 +136,10 @@ class ClassViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
-    """ViewSet for Subject model"""
     queryset = Subject.objects.all()
     serializer_class = SubjectSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -168,17 +147,15 @@ class SubjectViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
 
 
 class StudentViewSet(viewsets.ModelViewSet):
-    """ViewSet for Student model"""
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
     def get_permissions(self):
-        """Allow management and admin to create students"""
         if self.action == 'create':
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
@@ -188,35 +165,30 @@ class StudentViewSet(viewsets.ModelViewSet):
         if user.role == 'admin' or user.role == 'management':
             return Student.objects.all()
         elif user.role == 'staff':
-            # Staff can see students in their classes
             try:
                 staff_profile = user.staff_profile
                 return Student.objects.filter(current_class__class_teacher=staff_profile)
-            except:
+            except Exception:
                 return Student.objects.none()
         elif user.role == 'parent':
-            # Parents can see their children
             try:
-                parent_profile = user.parent_user
+                parent_profile = user.parent_profile
                 return parent_profile.children.all()
-            except:
+            except Exception:
                 return Student.objects.none()
         else:
-            # Students can only see themselves
             try:
                 return Student.objects.filter(user=user)
-            except:
+            except Exception:
                 return Student.objects.none()
 
 
 class StaffViewSet(viewsets.ModelViewSet):
-    """ViewSet for Staff model"""
     queryset = Staff.objects.all()
     serializer_class = StaffSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
     def get_permissions(self):
-        """Allow management and admin to create staff"""
         if self.action == 'create':
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
@@ -226,25 +198,16 @@ class StaffViewSet(viewsets.ModelViewSet):
         if user.role in ['admin', 'management']:
             return Staff.objects.all()
         else:
-            # Others can only see their own staff profile
             try:
                 return Staff.objects.filter(user=user)
-            except:
+            except Exception:
                 return Staff.objects.none()
 
     @action(detail=True, methods=['post'], url_path='assign-class')
     def assign_class(self, request, pk=None):
-        """
-        Assign or unassign this staff member as class teacher for a class.
-
-        Expects:
-        - class_id: ID of the class to assign as class teacher
-          If null/empty, unassigns the staff from any class.
-        """
         staff = self.get_object()
         class_id = request.data.get('class_id')
 
-        # Unassign from all classes if no class_id provided
         if not class_id:
             Class.objects.filter(class_teacher=staff).update(class_teacher=None)
             serializer = self.get_serializer(staff)
@@ -255,10 +218,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         except Class.DoesNotExist:
             return Response({'detail': 'Class not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Ensure this staff is class teacher for at most one class:
-        # clear previous assignments on other classes
         Class.objects.filter(class_teacher=staff).exclude(pk=target_class.pk).update(class_teacher=None)
-
         target_class.class_teacher = staff
         target_class.save()
 
@@ -267,7 +227,6 @@ class StaffViewSet(viewsets.ModelViewSet):
 
 
 class ParentViewSet(viewsets.ModelViewSet):
-    """ViewSet for Parent model"""
     queryset = Parent.objects.all()
     serializer_class = ParentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
@@ -277,109 +236,68 @@ class ParentViewSet(viewsets.ModelViewSet):
         if user.role in ['admin', 'management']:
             return Parent.objects.all()
         else:
-            # Others can only see their own parent profile
             try:
                 return Parent.objects.filter(user=user)
-            except:
+            except Exception:
                 return Parent.objects.none()
 
 
 class ResultViewSet(viewsets.ModelViewSet):
-    """ViewSet for Result model"""
     queryset = Result.objects.all()
     serializer_class = ResultSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
     def perform_create(self, serializer):
-        """Set the uploaded_by field to the current staff user when creating results"""
-        print(f"Creating result with data: {self.request.data}")
-        try:
-            if self.request.user.role == 'staff':
-                serializer.save(uploaded_by=self.request.user.staff_profile)
-            else:
-                serializer.save()
-            print("Result created successfully")
-        except Exception as e:
-            print(f"Error creating result: {e}")
-            print(f"Request data: {self.request.data}")
-            print(f"User: {self.request.user}")
-            # Try to get more detailed validation errors
-            if hasattr(e, 'detail'):
-                print(f"Validation errors: {e.detail}")
-            import traceback
-            traceback.print_exc()
-            raise
+        if self.request.user.role == 'staff':
+            serializer.save(uploaded_by=self.request.user.staff_profile)
+        else:
+            serializer.save()
 
     def get_queryset(self):
         user = self.request.user
-        print(f"ResultViewSet.get_queryset() called for user: {user} (role: {user.role})")
 
         if user.role == 'admin' or user.role == 'management':
-            print("Returning all results for admin/management")
             return Result.objects.all()
         elif user.role == 'staff':
-            # Staff can see results they uploaded or for students they teach
             try:
                 staff_profile = user.staff_profile
-                print(f"Staff profile: {staff_profile}")
-
-                queryset = Result.objects.filter(
+                return Result.objects.filter(
                     Q(uploaded_by=staff_profile) |
                     Q(student__current_class__class_teacher=staff_profile)
                 )
-
-                # Debug: show what results this returns
-                results_count = queryset.count()
-                print(f"Staff queryset returns {results_count} results")
-
-                # Show results for the specific case
-                specific_results = queryset.filter(academic_year_id=2, subject_id=1, term='first')
-                print(f"Specific results (Math 2026-2027 first term): {[r.id for r in specific_results]}")
-
-                return queryset
-            except Exception as e:
-                print(f"Error getting staff queryset: {e}")
+            except Exception:
                 return Result.objects.none()
         elif user.role == 'student':
-            # Students can see their own results
             try:
                 student_profile = user.student_profile
                 return Result.objects.filter(student=student_profile)
-            except:
+            except Exception:
                 return Result.objects.none()
         elif user.role == 'parent':
-            # Parents can see their children's results
             try:
                 parent_profile = user.parent_profile
                 return Result.objects.filter(student__in=parent_profile.children.all())
-            except:
+            except Exception:
                 return Result.objects.none()
         return Result.objects.none()
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
-        # Only staff can create/update results
         elif self.action in ['create', 'update', 'partial_update']:
             return [permissions.IsAuthenticated(), IsStaffOrAdmin()]
         elif self.action == 'export_results':
             return [permissions.IsAuthenticated(), IsStaffOrAdmin()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
 
     @action(detail=False, methods=['get'], url_path='export')
     def export_results(self, request):
-        """
-        Export all results that this staff member can access as CSV.
-        Staff can access results they uploaded or for students they teach.
-        """
         user = request.user
         if user.role not in ['staff', 'admin', 'management']:
             return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Get the results this user can access
         queryset = self.get_queryset()
 
-        # Optional filters
         class_id = request.query_params.get('class_id')
         term = request.query_params.get('term')
         academic_year = request.query_params.get('academic_year')
@@ -391,8 +309,6 @@ class ResultViewSet(viewsets.ModelViewSet):
         if academic_year:
             queryset = queryset.filter(academic_year=academic_year)
 
-        # Order results alphabetically by student name so that each
-        # student's rows are grouped together in the CSV.
         queryset = queryset.order_by(
             'student__user__first_name',
             'student__user__last_name',
@@ -400,7 +316,6 @@ class ResultViewSet(viewsets.ModelViewSet):
             'subject__name',
         )
 
-        # Generate CSV
         import csv
         from django.http import HttpResponse
 
@@ -439,7 +354,6 @@ class ResultViewSet(viewsets.ModelViewSet):
 
 
 class FeeStructureViewSet(viewsets.ModelViewSet):
-    """ViewSet for FeeStructure model"""
     queryset = FeeStructure.objects.all()
     serializer_class = FeeStructureSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -447,11 +361,10 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminOrReadOnly()]
+        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
 
 
 class FeePaymentViewSet(viewsets.ModelViewSet):
-    """ViewSet for FeePayment model"""
     queryset = FeePayment.objects.all()
     serializer_class = FeePaymentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
@@ -461,32 +374,20 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         if user.role == 'admin' or user.role == 'management':
             return FeePayment.objects.all()
         elif user.role == 'student':
-            # Students can see their own fee payments
             try:
                 student_profile = user.student_profile
                 return FeePayment.objects.filter(student=student_profile)
-            except:
+            except Exception:
                 return FeePayment.objects.none()
         elif user.role == 'parent':
-            # Parents can see their children's fee payments
             try:
                 parent_profile = user.parent_profile
                 return FeePayment.objects.filter(student__in=parent_profile.children.all())
-            except:
+            except Exception:
                 return FeePayment.objects.none()
         return FeePayment.objects.none()
 
     def create(self, request, *args, **kwargs):
-        """
-        Support part payments per term.
-
-        For each (student, academic_year, term) we keep a single FeePayment row and
-        accumulate `amount_paid` on it. `total_amount` represents the full fee for
-        that term. Status rules:
-        - amount_paid == 0            -> pending
-        - 0 < amount_paid < total     -> partial
-        - amount_paid >= total        -> paid
-        """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -497,45 +398,30 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         fee_structure = data.get('fee_structure')
         incoming_amount = data.get('amount_paid') or 0
 
-        print(f"📥 Payment request data: student={student}, academic_year={academic_year}, term={term}, fee_structure={fee_structure}, incoming_amount={incoming_amount}")
-
-        # Always determine the full term fee from the student's actual class grade
-        # and academic year, so each class uses its own configured fee even if an
-        # old/wrong fee_structure was saved previously.
-        from .models import FeeStructure as FSModel
-
         full_amount = None
         resolved_fee_structure = fee_structure
 
         try:
             if student and hasattr(student, 'current_class') and student.current_class and academic_year:
                 grade = student.current_class.grade
-                fs_qs = FSModel.objects.filter(
+                fs_qs = FeeStructure.objects.filter(
                     academic_year=academic_year,
                     grade=grade,
-                    fee_type=FSModel.FeeType.TUITION,
+                    fee_type=FeeStructure.FeeType.TUITION,
                 )
                 resolved_fee_structure = fs_qs.first() or fee_structure
                 if resolved_fee_structure and getattr(resolved_fee_structure, 'amount', None) is not None:
                     full_amount = resolved_fee_structure.amount
-                    print(f"📋 Using grade-based fee_structure.amount: {full_amount} for grade={grade}, academic_year={academic_year.id}, fee_structure_id={resolved_fee_structure.id}")
+        except Exception:
+            pass
 
-        except Exception as e:
-            print(f"⚠️ Failed to resolve grade-based fee_structure: {e}")
-
-        # Fallbacks if we still don't have a full_amount
         if full_amount is None:
             if resolved_fee_structure and hasattr(resolved_fee_structure, 'amount') and resolved_fee_structure.amount is not None:
                 full_amount = resolved_fee_structure.amount
-                print(f"📋 Fallback to resolved_fee_structure.amount: {full_amount} for fee_structure {resolved_fee_structure.id}")
             else:
                 full_amount = data.get('total_amount') or incoming_amount
-                print(f"📋 Fallback to payload total_amount or incoming_amount: {full_amount}")
 
-        # Always work with the resolved fee_structure (grade-correct if found)
         fee_structure = resolved_fee_structure
-
-        print(f"💰 Payment processing: student={getattr(student, 'id', None)}, term={term}, academic_year={getattr(academic_year, 'id', None)}, incoming_amount={incoming_amount}, full_amount={full_amount}, fee_structure_id={getattr(fee_structure, 'id', None)}")
 
         existing = FeePayment.objects.filter(
             student=student,
@@ -544,54 +430,39 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         ).first()
 
         if existing:
-            # Accumulate amount_paid on the existing record
             new_amount_paid = (existing.amount_paid or 0) + incoming_amount
-            # Cap at full_amount to avoid over-payment in records
             if full_amount:
                 new_amount_paid = min(new_amount_paid, full_amount)
 
             existing.amount_paid = new_amount_paid
-            # Keep or set total_amount as the full required amount
             if full_amount:
                 existing.total_amount = full_amount
 
-            # Update helpful audit fields from the latest payment
             existing.payment_method = data.get('payment_method') or existing.payment_method
             existing.transaction_id = data.get('transaction_id') or existing.transaction_id
             existing.remarks = data.get('remarks') or existing.remarks
             existing.due_date = data.get('due_date') or existing.due_date
 
-            # Compute status
-            print(f"📊 Status calculation: full_amount={full_amount}, new_amount_paid={new_amount_paid}, condition={full_amount and new_amount_paid >= full_amount}")
             if full_amount and new_amount_paid >= full_amount:
                 existing.status = FeePayment.PaymentStatus.PAID
-                print(f"✅ Status set to PAID")
             elif new_amount_paid > 0:
                 existing.status = FeePayment.PaymentStatus.PARTIAL
-                print(f"⚠️ Status set to PARTIAL")
             else:
                 existing.status = FeePayment.PaymentStatus.PENDING
-                print(f"⏳ Status set to PENDING")
 
             existing.save()
-            print(f"💾 Payment saved with status: {existing.status}")
             output_serializer = self.get_serializer(existing)
             return Response(output_serializer.data, status=status.HTTP_200_OK)
 
-        # No existing record -> create a new one and set status based on first payment
         total_amount = full_amount or incoming_amount
         amount_paid = min(incoming_amount, total_amount)
 
-        print(f"🆕 Creating new payment: total_amount={total_amount}, amount_paid={amount_paid}, condition={total_amount and amount_paid >= total_amount}")
         if total_amount and amount_paid >= total_amount:
             status_value = FeePayment.PaymentStatus.PAID
-            print(f"✅ New payment status: PAID")
         elif amount_paid > 0:
             status_value = FeePayment.PaymentStatus.PARTIAL
-            print(f"⚠️ New payment status: PARTIAL")
         else:
             status_value = FeePayment.PaymentStatus.PENDING
-            print(f"⏳ New payment status: PENDING")
 
         fee_payment = FeePayment.objects.create(
             student=student,
@@ -612,7 +483,6 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
 
 
 class StaffSalaryViewSet(viewsets.ModelViewSet):
-    """ViewSet for StaffSalary model"""
     queryset = StaffSalary.objects.select_related('staff__user', 'academic_year').all()
     serializer_class = StaffSalarySerializer
     permission_classes = [IsManagementOrAdmin]
@@ -633,7 +503,6 @@ class StaffSalaryViewSet(viewsets.ModelViewSet):
 
 
 class AnnouncementViewSet(viewsets.ModelViewSet):
-    """ViewSet for Announcement model"""
     queryset = Announcement.objects.filter(is_active=True)
     serializer_class = AnnouncementSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -642,7 +511,6 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = Announcement.objects.filter(is_active=True)
 
-        # Filter announcements based on target audience
         if user.role == 'student':
             queryset = queryset.filter(for_students=True)
         elif user.role == 'staff':
@@ -660,12 +528,10 @@ class AnnouncementViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
     def perform_create(self, serializer):
-        """Set the created_by field to the current user when creating announcements"""
         serializer.save(created_by=self.request.user)
 
 
 class AttendanceViewSet(viewsets.ModelViewSet):
-    """ViewSet for Attendance model"""
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
@@ -675,34 +541,29 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if user.role == 'admin' or user.role == 'management':
             return Attendance.objects.all()
         elif user.role == 'staff':
-            # Staff can see attendance for classes they teach
             try:
                 staff_profile = user.staff_profile
                 return Attendance.objects.filter(class_period__class_teacher=staff_profile)
-            except:
+            except Exception:
                 return Attendance.objects.none()
         elif user.role == 'student':
-            # Students can see their own attendance
             try:
                 student_profile = user.student_profile
                 return Attendance.objects.filter(student=student_profile)
-            except:
+            except Exception:
                 return Attendance.objects.none()
         elif user.role == 'parent':
-            # Parents can see their children's attendance
             try:
                 parent_profile = user.parent_profile
                 return Attendance.objects.filter(student__in=parent_profile.children.all())
-            except:
+            except Exception:
                 return Attendance.objects.none()
         return Attendance.objects.none()
 
 
-# Authentication views
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def login_view(request):
-    """Handle user login and return JWT tokens"""
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.validated_data['user']
@@ -718,16 +579,12 @@ def login_view(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# Dashboard views for different user roles
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_class_rankings(request):
-    """Get student rankings for a specific class, term, and academic year"""
     class_id = request.GET.get('class_id')
     term = request.GET.get('term')
     academic_year = request.GET.get('academic_year')
-
-    print(f"Rankings request: class_id={class_id}, term={term}, academic_year={academic_year}")
 
     if not all([class_id, term, academic_year]):
         return Response(
@@ -736,7 +593,6 @@ def get_class_rankings(request):
         )
 
     try:
-        # Validate inputs
         try:
             class_id_int = int(class_id)
         except ValueError:
@@ -745,13 +601,10 @@ def get_class_rankings(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Handle academic_year - could be ID or name
         academic_year_obj = None
         try:
-            academic_year_int = int(academic_year)
-            academic_year_obj = AcademicYear.objects.get(id=academic_year_int)
+            academic_year_obj = AcademicYear.objects.get(id=int(academic_year))
         except (ValueError, AcademicYear.DoesNotExist):
-            # Try to find by name
             try:
                 academic_year_obj = AcademicYear.objects.get(name=academic_year)
             except AcademicYear.DoesNotExist:
@@ -760,14 +613,12 @@ def get_class_rankings(request):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        # Validate term
         if term not in ['first', 'second', 'third', 'final']:
             return Response(
                 {'error': 'term must be one of: first, second, third, final'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if class exists
         qs = Class.objects.filter(id=class_id_int)
         if not qs.exists():
             return Response(
@@ -775,7 +626,6 @@ def get_class_rankings(request):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # For staff, ensure they are the class teacher of this class
         user = request.user
         if user.role == 'staff':
             try:
@@ -792,22 +642,11 @@ def get_class_rankings(request):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        # Get all results for this class, term, and academic year
         results = Result.objects.filter(
             student__current_class_id=class_id_int,
             term=term,
             academic_year=academic_year_obj
         ).select_related('student', 'subject', 'academic_year')
-
-        print(f"Found {len(results)} results for class_id={class_id_int}, term={term}, academic_year={academic_year_obj.name}")
-
-        # Debug: Check if there are any students in this class
-        class_students = Student.objects.filter(current_class_id=class_id_int)
-        print(f"Class has {len(class_students)} students total")
-
-        # Debug: Check if there are any results for this class at all
-        all_class_results = Result.objects.filter(student__current_class_id=class_id_int)
-        print(f"Class has {len(all_class_results)} results total across all terms/years")
 
         if not results:
             return Response({
@@ -821,7 +660,6 @@ def get_class_rankings(request):
                 }
             })
 
-        # Group results by student and calculate cumulative average
         student_averages = {}
 
         for result in results:
@@ -838,7 +676,6 @@ def get_class_rankings(request):
                     'subjects': []
                 }
 
-            # Add subject result
             subject_data = {
                 'subject_name': result.subject.name,
                 'ca_total': result.ca_total,
@@ -854,36 +691,25 @@ def get_class_rankings(request):
             student_averages[student_id]['total_max_score'] += result.total_marks
             student_averages[student_id]['subject_count'] += 1
 
-        print(f"Processed {len(student_averages)} students")
-
-        # Calculate average percentage for each student
         rankings_list = []
         for student_data in student_averages.values():
             if student_data['total_max_score'] > 0:
                 average_percentage = (student_data['total_weighted_score'] / student_data['total_max_score']) * 100
                 student_data['average_percentage'] = round(average_percentage, 2)
-                rankings_list.append(student_data)
             else:
                 student_data['average_percentage'] = 0.0
-                rankings_list.append(student_data)
+            rankings_list.append(student_data)
 
-        # Sort by average percentage descending
         rankings_list.sort(key=lambda x: x['average_percentage'], reverse=True)
 
-        print(f"Generated rankings for {len(rankings_list)} students")
-
-        # Assign positions, handling ties
         current_position = 1
         previous_percentage = None
 
         for i, student in enumerate(rankings_list):
             if previous_percentage is not None and student['average_percentage'] < previous_percentage:
                 current_position = i + 1
-
             student['position'] = current_position
             previous_percentage = student['average_percentage']
-
-        print("Rankings calculation completed successfully")
 
         return Response({
             'rankings': rankings_list,
@@ -897,54 +723,136 @@ def get_class_rankings(request):
 
     except Exception as e:
         import traceback
-        print(f"Error in get_class_rankings: {str(e)}")
-        print(traceback.format_exc())
+        traceback.print_exc()
         return Response(
             {'error': f'Failed to calculate rankings: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
+@api_view(['GET', 'POST'])
+@permission_classes([IsManagementOrAdmin])
+def promote_students(request):
+    """
+    GET  — preview which class each student would move to.
+    POST — execute the promotion.
+
+    GET params : from_academic_year (id), to_academic_year (id)
+    POST body  : from_academic_year, to_academic_year,
+                 repeated_student_ids (list), graduated_student_ids (list)
+    """
+    from_year_id = request.data.get('from_academic_year') if request.method == 'POST' else request.GET.get('from_academic_year')
+    to_year_id   = request.data.get('to_academic_year')   if request.method == 'POST' else request.GET.get('to_academic_year')
+
+    if not from_year_id or not to_year_id:
+        return Response(
+            {'error': 'from_academic_year and to_academic_year are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        from_year = AcademicYear.objects.get(id=from_year_id)
+        to_year   = AcademicYear.objects.get(id=to_year_id)
+    except AcademicYear.DoesNotExist:
+        return Response({'error': 'Academic year not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    students = Student.objects.filter(
+        current_class__academic_year=from_year
+    ).select_related('user', 'current_class')
+
+    if request.method == 'GET':
+        preview = []
+        for student in students:
+            current_grade = student.current_class.grade if student.current_class else None
+            next_grade    = current_grade + 1 if current_grade is not None else None
+            next_class    = None
+            if next_grade is not None:
+                next_class = Class.objects.filter(academic_year=to_year, grade=next_grade).first()
+
+            preview.append({
+                'student_id':     student.id,
+                'student_name':   student.user.get_full_name(),
+                'student_number': student.student_id,
+                'current_class':  student.current_class.name if student.current_class else None,
+                'current_grade':  current_grade,
+                'next_class':     next_class.name if next_class else None,
+                'next_class_id':  next_class.id   if next_class else None,
+                'can_promote':    next_class is not None,
+            })
+
+        return Response({
+            'students':  preview,
+            'from_year': from_year.name,
+            'to_year':   to_year.name,
+            'total':     len(preview),
+        })
+
+    # POST — execute
+    repeated_ids   = set(request.data.get('repeated_student_ids',  []))
+    graduated_ids  = set(request.data.get('graduated_student_ids', []))
+
+    promoted         = 0
+    repeated         = 0
+    graduated        = 0
+    no_class_found   = []
+
+    for student in students:
+        current_grade = student.current_class.grade if student.current_class else None
+
+        if student.id in graduated_ids:
+            student.current_class = None
+            student.save()
+            graduated += 1
+
+        elif student.id in repeated_ids:
+            same_class = Class.objects.filter(academic_year=to_year, grade=current_grade).first()
+            if same_class:
+                student.current_class = same_class
+                student.save()
+                repeated += 1
+            else:
+                no_class_found.append(
+                    f"{student.user.get_full_name()} (Grade {current_grade} repeat — no class in {to_year.name})"
+                )
+
+        else:
+            next_grade = current_grade + 1 if current_grade is not None else None
+            if next_grade is not None:
+                next_class = Class.objects.filter(academic_year=to_year, grade=next_grade).first()
+                if next_class:
+                    student.current_class = next_class
+                    student.save()
+                    promoted += 1
+                else:
+                    no_class_found.append(
+                        f"{student.user.get_full_name()} (Grade {next_grade} — no class found in {to_year.name})"
+                    )
+            else:
+                no_class_found.append(f"{student.user.get_full_name()} (no current grade)")
+
+    return Response({
+        'promoted':       promoted,
+        'repeated':       repeated,
+        'graduated':      graduated,
+        'no_class_found': no_class_found,
+        'message':        f'Done: {promoted} promoted, {repeated} repeated, {graduated} graduated.',
+    })
+
+
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def dashboard_stats(request):
-    """Get dashboard statistics based on user role"""
     user = request.user
     stats = {}
 
     if user.role == 'management':
-        # School-wide statistics
-        # Calculate revenue from paid fee payments (use amount_paid for actual collected amount)
-        revenue_agg = FeePayment.objects.filter(status='paid').aggregate(
-            total=Sum('amount_paid')
-        )
-        total_revenue = revenue_agg['total']
-        if total_revenue is None:
-            total_revenue = 0
-        else:
-            total_revenue = float(total_revenue)
+        revenue_agg = FeePayment.objects.filter(status='paid').aggregate(total=Sum('amount_paid'))
+        total_revenue = float(revenue_agg['total'] or 0)
 
-        print(f"Total revenue calculation: {total_revenue}")
-        print(f"Revenue aggregate result: {revenue_agg}")
-        print(f"Paid payments count: {FeePayment.objects.filter(status='paid').count()}")
+        pending_agg = FeePayment.objects.filter(status__in=['pending', 'overdue']).aggregate(total=Sum('total_amount'))
+        pending_fees = float(pending_agg['total'] or 0)
 
-        # Calculate pending fees
-        pending_agg = FeePayment.objects.filter(status__in=['pending', 'overdue']).aggregate(
-            total=Sum('total_amount')
-        )
-        pending_fees = pending_agg['total']
-        if pending_fees is None:
-            pending_fees = 0
-        else:
-            pending_fees = float(pending_fees)
-
-        print(f"Pending fees calculation: {pending_fees}")
-        print(f"Pending aggregate result: {pending_agg}")
-        print(f"Pending payments count: {FeePayment.objects.filter(status__in=['pending', 'overdue']).count()}")
-
-        # Get top performers (students with highest average grades)
         top_performers = []
-        # This would require complex aggregation - for now, get recent high-grade results
         recent_high_results = Result.objects.filter(
             grade__in=['A+', 'A', 'A-']
         ).select_related('student__user').order_by('-upload_date')[:3]
@@ -957,7 +865,6 @@ def dashboard_stats(request):
                 'grade': result.grade
             })
 
-        # Get recent results
         recent_results = Result.objects.select_related(
             'student__user', 'uploaded_by__user', 'subject'
         ).order_by('-upload_date')[:5]
@@ -976,20 +883,15 @@ def dashboard_stats(request):
                 'uploaded_by': result.uploaded_by.user.get_full_name() if result.uploaded_by else 'System'
             })
 
-        # Calculate average attendance (placeholder for now)
-        average_attendance = 85  # This would need Attendance model data
-
-        print(f"Final stats before return: total_revenue={total_revenue}, pending_fees={pending_fees}")
-
         stats = {
             'total_students': Student.objects.count(),
             'total_staff': Staff.objects.count(),
             'total_parents': Parent.objects.count(),
             'total_classes': Class.objects.count(),
             'total_subjects': Subject.objects.count(),
-            'total_revenue': float(total_revenue) if total_revenue else 0.0,
-            'pending_fees': float(pending_fees) if pending_fees else 0.0,
-            'average_attendance': average_attendance,
+            'total_revenue': total_revenue,
+            'pending_fees': pending_fees,
+            'average_attendance': 85,
             'top_performers': top_performers,
             'recent_results': recent_results_data,
             'pending_fee_payments': FeePayment.objects.filter(status='pending').count(),
@@ -998,36 +900,36 @@ def dashboard_stats(request):
             ).order_by('-created_at')[:5].count()
         }
 
-        print(f"Stats dict: {stats}")
-
     elif user.role == 'staff':
         try:
-            staff_profile = user.staff_user
+            staff_profile = user.staff_profile
+            try:
+                assigned_class = staff_profile.class_teacher
+                assigned_classes_count = 1
+                students_count = assigned_class.students.count()
+            except Exception:
+                assigned_classes_count = 0
+                students_count = 0
+
             stats = {
-                'assigned_classes': staff_profile.class_teacher.count(),
+                'assigned_classes': assigned_classes_count,
                 'assigned_subjects': staff_profile.subjects.count(),
-                'pending_results': 0,  # Would need more complex logic
-                'students_count': sum(
-                    class_obj.students.count()
-                    for class_obj in staff_profile.class_teacher.all()
-                ),
+                'pending_results': 0,
+                'students_count': students_count,
                 'recent_announcements': Announcement.objects.filter(
                     is_active=True, for_staff=True
                 ).order_by('-created_at')[:5].count()
             }
-        except:
+        except Exception:
             stats = {'error': 'Staff profile not found'}
 
     elif user.role == 'student':
         try:
             student_profile = user.student_profile
-
-            # Current class name
             current_class_name = (
                 student_profile.current_class.name if student_profile.current_class else None
             )
 
-            # Determine the relevant academic year (active or latest)
             academic_year = (
                 AcademicYear.objects.filter(is_active=True).first()
                 or AcademicYear.objects.order_by('-start_date').first()
@@ -1036,47 +938,34 @@ def dashboard_stats(request):
             session_pending_fees = 0
 
             if academic_year and student_profile.current_class:
-                # We treat the tuition fee defined in FeeStructure for this grade + year
-                # as the per-term fee, then multiply by 3 terms for the session total.
                 grade = student_profile.current_class.grade
-
                 tuition_qs = FeeStructure.objects.filter(
                     academic_year=academic_year,
                     grade=grade,
                     fee_type=FeeStructure.FeeType.TUITION,
                 )
-
                 per_term_fee = tuition_qs.aggregate(total=Sum('amount'))['total'] or 0
-
-                # Total expected for the whole academic session (3 terms)
                 session_total_fee = per_term_fee * 3
 
-                # Total actually paid by this student for this academic year (all terms)
                 paid_agg = FeePayment.objects.filter(
                     student=student_profile,
                     academic_year=academic_year,
                 ).aggregate(total=Sum('amount_paid'))
-
                 total_paid = paid_agg['total'] or 0
 
-                # Pending amount = expected session fee minus all payments made (never negative)
                 raw_pending = session_total_fee - total_paid
-                if raw_pending < 0:
-                    raw_pending = 0
-
-                session_pending_fees = float(raw_pending)
+                session_pending_fees = float(max(raw_pending, 0))
 
             stats = {
                 'current_class': current_class_name,
                 'total_results': Result.objects.filter(student=student_profile).count(),
-                # Monetary pending fees for the current/active academic session
                 'pending_fees': session_pending_fees,
-                'attendance_percentage': 0,  # Would need calculation
+                'attendance_percentage': 0,
                 'recent_announcements': Announcement.objects.filter(
                     is_active=True, for_students=True
                 ).order_by('-created_at')[:5].count(),
             }
-        except:
+        except Exception:
             stats = {'error': 'Student profile not found'}
 
     elif user.role == 'parent':
@@ -1094,7 +983,7 @@ def dashboard_stats(request):
                     is_active=True, for_parents=True
                 ).order_by('-created_at')[:5].count()
             }
-        except:
+        except Exception:
             stats = {'error': 'Parent profile not found'}
 
     return Response(stats)

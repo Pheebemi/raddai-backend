@@ -1,5 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenRefreshView
 from . import views
 
 # Create a router and register viewsets
@@ -25,10 +26,14 @@ urlpatterns = [
 
     # Authentication endpoints
     path('auth/login/', views.login_view, name='login'),
+    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
     # Dashboard endpoints
     path('dashboard/stats/', views.dashboard_stats, name='dashboard-stats'),
 
     # Rankings endpoints
     path('rankings/class/', views.get_class_rankings, name='class_rankings'),
+
+    # Promotion endpoint
+    path('promote-students/', views.promote_students, name='promote_students'),
 ]
