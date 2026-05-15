@@ -21,6 +21,9 @@ router.register(r'attendance', views.AttendanceViewSet)
 
 # URL patterns
 urlpatterns = [
+    # Custom endpoints BEFORE router (prevents router from swallowing them as pk lookups)
+    path('academic-years/toggle-results/', views.toggle_results_visibility, name='toggle_results'),
+
     # Include router URLs
     path('', include(router.urls)),
 
@@ -40,6 +43,4 @@ urlpatterns = [
     # Secure Flutterwave payment verification
     path('payments/verify/', views.verify_flutterwave_payment, name='verify_payment'),
 
-    # Results visibility toggle
-    path('academic-years/toggle-results/', views.toggle_results_visibility, name='toggle_results'),
 ]
