@@ -360,11 +360,12 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
     queryset = FeeStructure.objects.all()
     serializer_class = FeeStructureSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
 
 class FeePaymentViewSet(viewsets.ModelViewSet):
