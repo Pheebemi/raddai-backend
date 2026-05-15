@@ -90,7 +90,7 @@ class Class(models.Model):
 class Subject(models.Model):
     """Academic subject model"""
     name = models.CharField(max_length=100)
-    code = models.CharField(max_length=20, unique=True, blank=True)
+    code = models.CharField(max_length=20, unique=True, blank=True, null=True, default=None)
     description = models.TextField(blank=True)
     grades = models.JSONField(default=list, blank=True)
 

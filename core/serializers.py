@@ -106,6 +106,12 @@ class SubjectSerializer(serializers.ModelSerializer):
         model = Subject
         fields = '__all__'
 
+    def validate_code(self, value):
+        # Store empty string as None to avoid unique constraint violations
+        if value == '' or value is None:
+            return None
+        return value
+
 
 class ClassSerializer(serializers.ModelSerializer):
     """Serializer for Class model"""
