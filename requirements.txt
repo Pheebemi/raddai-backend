@@ -6,3 +6,4 @@ mysqlclient
 requests
 python-dotenv
 pillow
+whitenoise
