@@ -581,6 +581,49 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+def toggle_results_visibility(request):
+    if request.user.role not in ['management', 'admin']:
+        return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+    academic_year_id = request.data.get('academic_year_id')
+    visible = request.data.get('visible')
+    term = request.data.get('term')  # optional: 'first', 'second', 'third'
+
+    if academic_year_id is None or visible is None:
+        return Response({'error': 'academic_year_id and visible are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        academic_year = AcademicYear.objects.get(id=academic_year_id)
+    except AcademicYear.DoesNotExist:
+        return Response({'error': 'Academic year not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if term == 'first':
+        academic_year.first_term_visible = bool(visible)
+    elif term == 'second':
+        academic_year.second_term_visible = bool(visible)
+    elif term == 'third':
+        academic_year.third_term_visible = bool(visible)
+    else:
+        # Toggle all terms together
+        academic_year.results_visible = bool(visible)
+        academic_year.first_term_visible = bool(visible)
+        academic_year.second_term_visible = bool(visible)
+        academic_year.third_term_visible = bool(visible)
+
+    academic_year.save()
+
+    return Response({
+        'id': academic_year.id,
+        'name': academic_year.name,
+        'results_visible': academic_year.results_visible,
+        'first_term_visible': academic_year.first_term_visible,
+        'second_term_visible': academic_year.second_term_visible,
+        'third_term_visible': academic_year.third_term_visible,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
 def verify_flutterwave_payment(request):
     import requests as http_requests
     from django.conf import settings as django_settings

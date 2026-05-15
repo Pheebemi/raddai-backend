@@ -39,4 +39,7 @@ urlpatterns = [
 
     # Secure Flutterwave payment verification
     path('payments/verify/', views.verify_flutterwave_payment, name='verify_payment'),
+
+    # Results visibility toggle
+    path('academic-years/toggle-results/', views.toggle_results_visibility, name='toggle_results'),
 ]

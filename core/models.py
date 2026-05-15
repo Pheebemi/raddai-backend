@@ -61,6 +61,10 @@ class AcademicYear(models.Model):
     start_date = models.DateField()
     end_date = models.DateField()
     is_active = models.BooleanField(default=False)
+    results_visible = models.BooleanField(default=False)
+    first_term_visible = models.BooleanField(default=False)
+    second_term_visible = models.BooleanField(default=False)
+    third_term_visible = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-start_date']
