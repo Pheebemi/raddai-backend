@@ -90,11 +90,12 @@ class Class(models.Model):
 class Subject(models.Model):
     """Academic subject model"""
     name = models.CharField(max_length=100)
-    code = models.CharField(max_length=20, unique=True)
+    code = models.CharField(max_length=20, unique=True, blank=True)
     description = models.TextField(blank=True)
+    grades = models.JSONField(default=list, blank=True)
 
     def __str__(self):
-        return f"{self.name} ({self.code})"
+        return f"{self.name} ({self.code})" if self.code else self.name
 
 
 class Student(models.Model):

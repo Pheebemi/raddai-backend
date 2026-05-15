@@ -152,6 +152,18 @@ class SubjectViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
+    def get_queryset(self):
+        qs = Subject.objects.all()
+        grade = self.request.query_params.get('grade')
+        if grade:
+            try:
+                grade_int = int(grade)
+                # Return subjects assigned to this grade OR subjects with no grade restriction
+                qs = qs.filter(grades__contains=grade_int) | qs.filter(grades=[])
+            except ValueError:
+                pass
+        return qs
+
 
 
 
