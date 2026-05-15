@@ -153,6 +153,8 @@ class SubjectViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
 
+
+
 class StudentViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
