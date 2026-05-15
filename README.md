@@ -14,7 +14,7 @@ A comprehensive Django REST API backend for Laazeere Academy management system s
 
 - **Django 6.0.1**
 - **Django REST Framework** - API framework
-- **JWT Authentication** - Token-based auth
+- **JWT Authentication** - Token-based auth yoo
 - **PostgreSQL** - Database (SQLite for development)
 - **CORS Headers** - Cross-origin support
 
