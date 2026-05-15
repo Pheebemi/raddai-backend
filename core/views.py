@@ -121,33 +121,36 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
     queryset = AcademicYear.objects.all()
     serializer_class = AcademicYearSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
 
 class ClassViewSet(viewsets.ModelViewSet):
     queryset = Class.objects.all()
     serializer_class = ClassSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
     queryset = Subject.objects.all()
     serializer_class = SubjectSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
 
 class StudentViewSet(viewsets.ModelViewSet):
