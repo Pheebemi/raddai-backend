@@ -562,6 +562,136 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
 
 @api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def verify_flutterwave_payment(request):
+    import requests as http_requests
+    from django.conf import settings as django_settings
+    import calendar
+    from datetime import date
+
+    transaction_id = request.data.get('transaction_id')
+    student_id = request.data.get('student_id')
+    term = request.data.get('term')
+    academic_year_id = request.data.get('academic_year')
+    expected_amount = request.data.get('expected_amount')
+    remarks = request.data.get('remarks', '')
+
+    if not transaction_id:
+        return Response({'error': 'transaction_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Idempotency — already recorded for this transaction
+    existing_payment = FeePayment.objects.filter(transaction_id=str(transaction_id)).first()
+    if existing_payment:
+        from .serializers import FeePaymentSerializer
+        return Response(FeePaymentSerializer(existing_payment).data, status=status.HTTP_200_OK)
+
+    # Verify with Flutterwave
+    secret_key = getattr(django_settings, 'FLUTTERWAVE_SECRET_KEY', '')
+    if not secret_key:
+        return Response({'error': 'Payment verification not configured on server'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    try:
+        flw_response = http_requests.get(
+            f'https://api.flutterwave.com/v3/transactions/{transaction_id}/verify',
+            headers={'Authorization': f'Bearer {secret_key}'},
+            timeout=30,
+        )
+    except Exception as e:
+        return Response({'error': f'Verification request failed: {str(e)}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    if flw_response.status_code != 200:
+        return Response({'error': 'Flutterwave verification failed'}, status=status.HTTP_400_BAD_REQUEST)
+
+    flw_data = flw_response.json()
+
+    if flw_data.get('status') != 'success':
+        return Response({'error': 'Transaction could not be verified'}, status=status.HTTP_400_BAD_REQUEST)
+
+    tx_data = flw_data.get('data', {})
+
+    if tx_data.get('status') != 'successful':
+        return Response({'error': f'Transaction status: {tx_data.get("status")}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if tx_data.get('currency') != 'NGN':
+        return Response({'error': 'Invalid currency'}, status=status.HTTP_400_BAD_REQUEST)
+
+    verified_amount = float(tx_data.get('amount', 0))
+
+    if expected_amount and abs(verified_amount - float(expected_amount)) > 1:
+        return Response({
+            'error': f'Amount mismatch: expected ₦{expected_amount}, verified ₦{verified_amount}'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Get student
+    try:
+        student = Student.objects.get(id=student_id)
+    except Student.DoesNotExist:
+        return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get academic year
+    try:
+        academic_year_obj = AcademicYear.objects.get(id=academic_year_id)
+    except AcademicYear.DoesNotExist:
+        return Response({'error': 'Academic year not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Find fee structure
+    fee_structure = None
+    if student.current_class:
+        fee_structure = FeeStructure.objects.filter(
+            grade=student.current_class.grade,
+            fee_type='tuition',
+            academic_year=academic_year_obj,
+        ).first()
+
+    total_amount = float(fee_structure.amount) if fee_structure else verified_amount
+
+    # Due date = end of current month
+    today = date.today()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    due_date = date(today.year, today.month, last_day)
+
+    # Partial payment — add to existing record
+    existing = FeePayment.objects.filter(
+        student=student,
+        academic_year=academic_year_obj,
+        term=term,
+    ).first()
+
+    if existing:
+        new_amount_paid = float(existing.amount_paid or 0) + verified_amount
+        new_amount_paid = min(new_amount_paid, total_amount)
+        existing.amount_paid = new_amount_paid
+        existing.total_amount = total_amount
+        existing.status = FeePayment.PaymentStatus.PAID if new_amount_paid >= total_amount else FeePayment.PaymentStatus.PARTIAL
+        existing.transaction_id = str(transaction_id)
+        existing.payment_method = 'flutterwave'
+        existing.remarks = remarks or existing.remarks
+        existing.save()
+        from .serializers import FeePaymentSerializer
+        return Response(FeePaymentSerializer(existing).data, status=status.HTTP_200_OK)
+
+    # New payment
+    payment_status = FeePayment.PaymentStatus.PAID if verified_amount >= total_amount else FeePayment.PaymentStatus.PARTIAL
+
+    payment = FeePayment.objects.create(
+        student=student,
+        fee_structure=fee_structure,
+        academic_year=academic_year_obj,
+        term=term,
+        amount_paid=verified_amount,
+        total_amount=total_amount,
+        status=payment_status,
+        payment_method='flutterwave',
+        transaction_id=str(transaction_id),
+        remarks=remarks,
+        due_date=due_date,
+    )
+
+    from .serializers import FeePaymentSerializer
+    return Response(FeePaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def login_view(request):
     serializer = LoginSerializer(data=request.data)

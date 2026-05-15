@@ -10,10 +10,17 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env file if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / '.env')
+except ImportError:
+    pass
 
 
 # Quick-start development settings - unsuitable for production
@@ -26,6 +33,9 @@ SECRET_KEY = 'django-insecure-gi1l4=h)s%ay%5gj4%#8pz!y^p!!%)q*fwc%b_h4%)ydhow3kw
 DEBUG = True
 
 ALLOWED_HOSTS = ['*']
+
+# Flutterwave — secret key lives only on the server, never in the frontend
+FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY', '')
 
 
 # Application definition

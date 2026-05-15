@@ -36,4 +36,7 @@ urlpatterns = [
 
     # Promotion endpoint
     path('promote-students/', views.promote_students, name='promote_students'),
+
+    # Secure Flutterwave payment verification
+    path('payments/verify/', views.verify_flutterwave_payment, name='verify_payment'),
 ]
