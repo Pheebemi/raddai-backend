@@ -27,12 +27,11 @@ except ImportError:
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-gi1l4=h)s%ay%5gj4%#8pz!y^p!!%)q*fwc%b_h4%)ydhow3kw'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-gi1l4=h)s%ay%5gj4%#8pz!y^p!!%)q*fwc%b_h4%)ydhow3kw')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'laazeereacademy.pw,www.laazeereacademy.pw,localhost,127.0.0.1').split(',')
 
 # Flutterwave — secret key lives only on the server, never in the frontend
 FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY', '')
@@ -93,8 +92,15 @@ WSGI_APPLICATION = 'school_management.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.environ.get('DB_NAME', ''),
+        'USER': os.environ.get('DB_USER', ''),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '3306'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+        },
     }
 }
 
@@ -133,13 +139,21 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Custom User Model
 AUTH_USER_MODEL = 'core.User'
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    'https://laazeereacademy.com',
+    'https://www.laazeereacademy.com',
+    'https://laazeereacademy.pw',
+    'https://www.laazeereacademy.pw',
+]
 
 CORS_ALLOW_CREDENTIALS = True
 
