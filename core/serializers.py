@@ -191,6 +191,7 @@ class ParentSerializer(serializers.ModelSerializer):
     """Serializer for Parent model"""
     user_details = UserSerializer(source='user', read_only=True)
     children_count = serializers.SerializerMethodField()
+    parent_id = serializers.CharField(required=False, allow_blank=True, default='')
 
     class Meta:
         model = Parent

@@ -264,6 +264,16 @@ class ParentViewSet(viewsets.ModelViewSet):
             except Exception:
                 return Parent.objects.none()
 
+    def perform_create(self, serializer):
+        # Auto-generate parent_id if not provided
+        if not serializer.validated_data.get('parent_id'):
+            last = Parent.objects.order_by('-id').first()
+            next_num = (last.id + 1) if last else 1
+            parent_id = f'PAR{next_num:04d}'
+            serializer.save(parent_id=parent_id)
+        else:
+            serializer.save()
+
 
 class ResultViewSet(viewsets.ModelViewSet):
     queryset = Result.objects.all()
