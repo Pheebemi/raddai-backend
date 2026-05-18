@@ -128,6 +128,12 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        # If setting this year as active, deactivate all others
+        if instance.is_active:
+            AcademicYear.objects.exclude(pk=instance.pk).update(is_active=False)
+
 
 class ClassViewSet(viewsets.ModelViewSet):
     queryset = Class.objects.all()
