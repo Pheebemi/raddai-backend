@@ -43,4 +43,7 @@ urlpatterns = [
     # Secure Flutterwave payment verification
     path('payments/verify/', views.verify_flutterwave_payment, name='verify_payment'),
 
+    # Get per-term fee for current student
+    path('fees/student-term-fee/', views.get_student_term_fee, name='student_term_fee'),
+
 ]

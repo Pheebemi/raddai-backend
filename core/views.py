@@ -1048,6 +1048,53 @@ def promote_students(request):
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
+def get_student_term_fee(request):
+    """Returns the tuition fee amount for the student's current class and a given academic year."""
+    academic_year_id = request.query_params.get('academic_year')
+    student_id = request.query_params.get('student_id')  # for parent paying for a child
+
+    try:
+        if student_id:
+            student = Student.objects.get(id=student_id)
+        elif request.user.role == 'student':
+            student = request.user.student_profile
+        else:
+            return Response({'error': 'student_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not student.current_class:
+            return Response({'fee': None, 'reason': 'no_class'})
+
+        grade = student.current_class.grade
+
+        if academic_year_id:
+            academic_year = AcademicYear.objects.filter(id=academic_year_id).first()
+        else:
+            academic_year = AcademicYear.objects.filter(is_active=True).first()
+
+        if not academic_year:
+            return Response({'fee': None, 'reason': 'no_academic_year'})
+
+        fee_structure = FeeStructure.objects.filter(
+            academic_year=academic_year,
+            grade=grade,
+            fee_type=FeeStructure.FeeType.TUITION,
+        ).first()
+
+        if not fee_structure:
+            return Response({'fee': None, 'reason': 'no_fee_structure'})
+
+        return Response({
+            'fee': float(fee_structure.amount),
+            'grade': grade,
+            'academic_year': academic_year.name,
+            'academic_year_id': academic_year.id,
+        })
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def dashboard_stats(request):
     user = request.user
     stats = {}
@@ -1167,6 +1214,8 @@ def dashboard_stats(request):
                 'current_class': current_class_name,
                 'total_results': Result.objects.filter(student=student_profile).count(),
                 'pending_fees': session_pending_fees,
+                'per_term_fee': float(per_term_fee) if academic_year and student_profile.current_class else 0,
+                'academic_year_id': academic_year.id if academic_year else None,
                 'attendance_percentage': 0,
                 'recent_announcements': Announcement.objects.filter(
                     is_active=True, for_students=True
