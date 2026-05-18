@@ -1100,11 +1100,44 @@ def dashboard_stats(request):
     stats = {}
 
     if user.role == 'management':
+        # Total revenue = all paid amounts
         revenue_agg = FeePayment.objects.filter(status='paid').aggregate(total=Sum('amount_paid'))
         total_revenue = float(revenue_agg['total'] or 0)
 
-        pending_agg = FeePayment.objects.filter(status__in=['pending', 'overdue']).aggregate(total=Sum('total_amount'))
-        pending_fees = float(pending_agg['total'] or 0)
+        # True pending = Total Expected Revenue - Total Paid
+        # Total expected = for each student, find their grade's fee × 3 terms
+        active_year = AcademicYear.objects.filter(is_active=True).first()
+        total_expected = 0.0
+
+        if active_year:
+            # Group students by grade efficiently
+            from django.db.models import Count as DbCount
+            students_by_grade = (
+                Student.objects
+                .filter(current_class__academic_year=active_year, current_class__isnull=False)
+                .values('current_class__grade')
+                .annotate(count=DbCount('id'))
+            )
+            # Build grade → fee map
+            fee_map = {
+                fs.grade: float(fs.amount)
+                for fs in FeeStructure.objects.filter(
+                    academic_year=active_year,
+                    fee_type=FeeStructure.FeeType.TUITION,
+                )
+            }
+            for row in students_by_grade:
+                grade = row['current_class__grade']
+                fee = fee_map.get(grade, 0)
+                total_expected += fee * 3 * row['count']  # 3 terms per student
+
+        paid_in_year = float(
+            FeePayment.objects.filter(
+                academic_year=active_year, status='paid'
+            ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        ) if active_year else 0.0
+
+        pending_fees = max(total_expected - paid_in_year, 0)
 
         top_performers = []
         recent_high_results = Result.objects.filter(
@@ -1145,6 +1178,7 @@ def dashboard_stats(request):
             'total_subjects': Subject.objects.count(),
             'total_revenue': total_revenue,
             'pending_fees': pending_fees,
+            'total_expected': total_expected,
             'average_attendance': 85,
             'top_performers': top_performers,
             'recent_results': recent_results_data,
