@@ -191,6 +191,7 @@ class ParentSerializer(serializers.ModelSerializer):
     """Serializer for Parent model"""
     user_details = UserSerializer(source='user', read_only=True)
     children_count = serializers.SerializerMethodField()
+    children_details = serializers.SerializerMethodField()
     parent_id = serializers.CharField(required=False, allow_blank=True, default='')
 
     class Meta:
@@ -199,6 +200,24 @@ class ParentSerializer(serializers.ModelSerializer):
 
     def get_children_count(self, obj):
         return obj.children.count()
+
+    def get_children_details(self, obj):
+        children = []
+        for student in obj.children.select_related('user', 'current_class').all():
+            children.append({
+                'id': student.id,
+                'student_id': student.student_id,
+                'current_class_name': student.current_class.name if student.current_class else None,
+                'current_class_id': student.current_class.id if student.current_class else None,
+                'user_details': {
+                    'id': student.user.id,
+                    'first_name': student.user.first_name,
+                    'last_name': student.user.last_name,
+                    'email': student.user.email,
+                    'phone_number': student.user.phone_number,
+                }
+            })
+        return children
 
     def update(self, instance, validated_data):
         # Handle ManyToMany children field explicitly
