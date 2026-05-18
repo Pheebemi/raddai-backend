@@ -1128,12 +1128,6 @@ def dashboard_stats(request):
 
         total_expected = 0.0
         if calc_year:
-            students_by_grade = (
-                Student.objects
-                .filter(current_class__academic_year=calc_year, current_class__isnull=False)
-                .values('current_class__grade')
-                .annotate(count=DbCount('id'))
-            )
             fee_map = {
                 fs.grade: float(fs.amount)
                 for fs in FeeStructure.objects.filter(
@@ -1141,19 +1135,60 @@ def dashboard_stats(request):
                     fee_type=FeeStructure.FeeType.TUITION,
                 )
             }
-            for row in students_by_grade:
-                grade = row['current_class__grade']
-                fee = fee_map.get(grade, 0)
-                total_expected += fee * 3 * row['count']
+
+            if calc_year == active_year:
+                # Active year: use current_class (accurate for current enrolment)
+                students_by_grade = (
+                    Student.objects
+                    .filter(current_class__academic_year=calc_year, current_class__isnull=False)
+                    .values('current_class__grade')
+                    .annotate(count=DbCount('id'))
+                )
+                for row in students_by_grade:
+                    grade = row['current_class__grade']
+                    fee = fee_map.get(grade, 0)
+                    total_expected += fee * 3 * row['count']
+            else:
+                # Old year: use recorded_class from results (historical enrolment)
+                from django.db.models import Count as RCount
+                historical = (
+                    Result.objects
+                    .filter(academic_year=calc_year, recorded_class__isnull=False)
+                    .values('student', 'recorded_class__grade')
+                    .distinct()
+                )
+                # Count distinct students per grade
+                grade_counts: dict = {}
+                for row in historical:
+                    grade = row['recorded_class__grade']
+                    if grade not in grade_counts:
+                        grade_counts[grade] = set()
+                    grade_counts[grade].add(row['student'])
+                for grade, students_set in grade_counts.items():
+                    fee = fee_map.get(grade, 0)
+                    total_expected += fee * 3 * len(students_set)
 
         paid_in_year = float(
             payment_qs.filter(status='paid').aggregate(total=Sum('amount_paid'))['total'] or 0
         )
-        # Overdue = outstanding from non-active years
-        overdue_agg = payment_qs.filter(status='overdue').aggregate(total=Sum('total_amount'))
-        overdue_amount = float(overdue_agg['total'] or 0)
 
-        pending_fees = max(total_expected - paid_in_year, 0)
+        outstanding = max(total_expected - paid_in_year, 0)
+
+        # Determine if the selected year is the active year
+        is_active_year = (
+            calc_year and active_year and calc_year.id == active_year.id
+        ) or (not academic_year_id or academic_year_id == 'all')
+
+        if is_active_year:
+            # Current year: outstanding = pending (not overdue yet)
+            pending_fees = outstanding
+            overdue_amount = float(
+                payment_qs.filter(status='overdue').aggregate(total=Sum('total_amount'))['total'] or 0
+            )
+        else:
+            # Old year: everything outstanding is overdue (year has ended)
+            pending_fees = 0
+            overdue_amount = outstanding
 
         top_performers = []
         recent_high_results = Result.objects.filter(
