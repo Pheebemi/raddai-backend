@@ -200,6 +200,14 @@ class ParentSerializer(serializers.ModelSerializer):
     def get_children_count(self, obj):
         return obj.children.count()
 
+    def update(self, instance, validated_data):
+        # Handle ManyToMany children field explicitly
+        children = validated_data.pop('children', None)
+        instance = super().update(instance, validated_data)
+        if children is not None:
+            instance.children.set(children)
+        return instance
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Remove user_details to avoid circular reference when used in nested serialization
