@@ -569,30 +569,39 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+    pagination_class = None
 
     def get_queryset(self):
+        date = self.request.query_params.get('date')
         user = self.request.user
+
         if user.role == 'admin' or user.role == 'management':
-            return Attendance.objects.all()
+            qs = Attendance.objects.all()
         elif user.role == 'staff':
             try:
                 staff_profile = user.staff_profile
-                return Attendance.objects.filter(class_period__class_teacher=staff_profile)
+                qs = Attendance.objects.filter(class_period__class_teacher=staff_profile)
             except Exception:
-                return Attendance.objects.none()
+                qs = Attendance.objects.none()
         elif user.role == 'student':
             try:
                 student_profile = user.student_profile
-                return Attendance.objects.filter(student=student_profile)
+                qs = Attendance.objects.filter(student=student_profile)
             except Exception:
-                return Attendance.objects.none()
+                qs = Attendance.objects.none()
         elif user.role == 'parent':
             try:
                 parent_profile = user.parent_profile
-                return Attendance.objects.filter(student__in=parent_profile.children.all())
+                qs = Attendance.objects.filter(student__in=parent_profile.children.all())
             except Exception:
-                return Attendance.objects.none()
-        return Attendance.objects.none()
+                qs = Attendance.objects.none()
+        else:
+            qs = Attendance.objects.none()
+
+        if date:
+            qs = qs.filter(date=date)
+
+        return qs
 
 
 @api_view(['POST'])
