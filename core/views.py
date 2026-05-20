@@ -648,6 +648,145 @@ def toggle_results_visibility(request):
 
 
 @api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def flutterwave_webhook(request):
+    """
+    Flutterwave calls this endpoint directly when a payment completes.
+    Runs server-to-server — independent of the user's browser.
+    """
+    import requests as http_requests
+    from django.conf import settings as django_settings
+    import calendar
+    from datetime import date
+
+    # Verify the webhook signature
+    webhook_hash = getattr(django_settings, 'FLUTTERWAVE_WEBHOOK_HASH', '')
+    if webhook_hash:
+        received_hash = request.headers.get('verif-hash', '')
+        if received_hash != webhook_hash:
+            return Response({'error': 'Invalid webhook signature'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    data = request.data
+    event = data.get('event', '')
+
+    # Only handle successful charge events
+    if event != 'charge.completed':
+        return Response({'status': 'ignored'})
+
+    tx_data = data.get('data', {})
+
+    if tx_data.get('status') != 'successful':
+        return Response({'status': 'ignored'})
+
+    if tx_data.get('currency') != 'NGN':
+        return Response({'status': 'ignored'})
+
+    transaction_id = tx_data.get('id')
+    tx_ref = tx_data.get('tx_ref', '')
+    verified_amount = float(tx_data.get('amount', 0))
+
+    if not transaction_id:
+        return Response({'error': 'No transaction ID'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Idempotency — already recorded
+    if FeePayment.objects.filter(transaction_id=str(transaction_id)).exists():
+        return Response({'status': 'already_recorded'})
+
+    # Verify with Flutterwave API
+    secret_key = getattr(django_settings, 'FLUTTERWAVE_SECRET_KEY', '')
+    try:
+        flw_response = http_requests.get(
+            f'https://api.flutterwave.com/v3/transactions/{transaction_id}/verify',
+            headers={'Authorization': f'Bearer {secret_key}'},
+            timeout=30,
+        )
+        flw_data = flw_response.json()
+        if flw_data.get('status') != 'success' or flw_data.get('data', {}).get('status') != 'successful':
+            return Response({'status': 'verification_failed'})
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    # Extract student info from tx_ref (format: school_fee_{user_id}_{timestamp})
+    # We need to find the student from the meta or tx_ref
+    meta = tx_data.get('meta', {})
+    student_id = meta.get('student_id') if meta else None
+
+    # Try to parse student_id from tx_ref: school_fee_{user_id}_{timestamp}
+    if not student_id and tx_ref.startswith('school_fee_'):
+        try:
+            user_id = int(tx_ref.split('_')[2])
+            student = Student.objects.filter(user_id=user_id).first()
+            if student:
+                student_id = student.id
+        except (IndexError, ValueError):
+            pass
+
+    if not student_id:
+        return Response({'error': 'Could not identify student'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        student = Student.objects.get(id=student_id)
+    except Student.DoesNotExist:
+        return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get active academic year
+    academic_year = AcademicYear.objects.filter(is_active=True).first()
+    if not academic_year:
+        return Response({'error': 'No active academic year'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Find fee structure
+    fee_structure = None
+    if student.current_class:
+        fee_structure = FeeStructure.objects.filter(
+            grade=student.current_class.grade,
+            fee_type='tuition',
+            academic_year=academic_year,
+        ).first()
+
+    total_amount = float(fee_structure.amount) if fee_structure else verified_amount
+
+    # Term from meta or default to first available unpaid term
+    term = meta.get('term') if meta else None
+    if not term:
+        for t in ['first', 'second', 'third']:
+            if not FeePayment.objects.filter(student=student, academic_year=academic_year, term=t, status='paid').exists():
+                term = t
+                break
+    if not term:
+        term = 'first'
+
+    today = date.today()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    due_date = date(today.year, today.month, last_day)
+
+    existing = FeePayment.objects.filter(student=student, academic_year=academic_year, term=term).first()
+    if existing:
+        new_paid = min(float(existing.amount_paid or 0) + verified_amount, total_amount)
+        existing.amount_paid = new_paid
+        existing.total_amount = total_amount
+        existing.status = FeePayment.PaymentStatus.PAID if new_paid >= total_amount else FeePayment.PaymentStatus.PARTIAL
+        existing.transaction_id = str(transaction_id)
+        existing.payment_method = 'flutterwave'
+        existing.save()
+    else:
+        payment_status = FeePayment.PaymentStatus.PAID if verified_amount >= total_amount else FeePayment.PaymentStatus.PARTIAL
+        FeePayment.objects.create(
+            student=student,
+            fee_structure=fee_structure,
+            academic_year=academic_year,
+            term=term,
+            amount_paid=verified_amount,
+            total_amount=total_amount,
+            status=payment_status,
+            payment_method='flutterwave',
+            transaction_id=str(transaction_id),
+            due_date=due_date,
+        )
+
+    return Response({'status': 'recorded'})
+
+
+@api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def verify_flutterwave_payment(request):
     import requests as http_requests

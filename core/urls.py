@@ -43,6 +43,9 @@ urlpatterns = [
     # Secure Flutterwave payment verification
     path('payments/verify/', views.verify_flutterwave_payment, name='verify_payment'),
 
+    # Flutterwave webhook — called by Flutterwave server when payment completes
+    path('payments/webhook/', views.flutterwave_webhook, name='flutterwave_webhook'),
+
     # Get per-term fee for current student
     path('fees/student-term-fee/', views.get_student_term_fee, name='student_term_fee'),
 
