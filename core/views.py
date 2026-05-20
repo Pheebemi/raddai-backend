@@ -675,7 +675,7 @@ def flutterwave_webhook(request):
 
     tx_data = data.get('data', {})
 
-    if tx_data.get('status') != 'successful':
+    if tx_data.get('status') not in ['successful', 'completed']:
         return Response({'status': 'ignored'})
 
     if tx_data.get('currency') != 'NGN':
@@ -834,7 +834,7 @@ def verify_flutterwave_payment(request):
 
     tx_data = flw_data.get('data', {})
 
-    if tx_data.get('status') != 'successful':
+    if tx_data.get('status') not in ['successful', 'completed']:
         return Response({'error': f'Transaction status: {tx_data.get("status")}'}, status=status.HTTP_400_BAD_REQUEST)
 
     if tx_data.get('currency') != 'NGN':
