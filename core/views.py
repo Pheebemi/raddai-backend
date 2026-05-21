@@ -1016,20 +1016,14 @@ def get_class_rankings(request):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        # Try recorded_class first (accurate for historical/past year results)
+        # Use recorded_class when set; fall back to current_class only when recorded_class is NULL
         results = Result.objects.filter(
-            recorded_class_id=class_id_int,
             term=term,
-            academic_year=academic_year_obj
+            academic_year=academic_year_obj,
+        ).filter(
+            Q(recorded_class_id=class_id_int) |
+            Q(recorded_class__isnull=True, student__current_class_id=class_id_int)
         ).select_related('student', 'subject', 'academic_year')
-
-        # Fallback to current_class for legacy records without recorded_class set
-        if not results.exists():
-            results = Result.objects.filter(
-                student__current_class_id=class_id_int,
-                term=term,
-                academic_year=academic_year_obj
-            ).select_related('student', 'subject', 'academic_year')
 
         if not results:
             return Response({
