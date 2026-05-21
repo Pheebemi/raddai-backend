@@ -318,14 +318,9 @@ class ResultSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("CA3 score must be between 0 and 10")
         return value
 
-    def validate_ca4_score(self, value):
-        if value < 0 or value > 10:
-            raise serializers.ValidationError("CA4 score must be between 0 and 10")
-        return value
-
     def validate_exam_score(self, value):
-        if value < 0 or value > 60:
-            raise serializers.ValidationError("Exam score must be between 0 and 60")
+        if value < 0 or value > 70:
+            raise serializers.ValidationError("Exam score must be between 0 and 70")
         return value
 
 

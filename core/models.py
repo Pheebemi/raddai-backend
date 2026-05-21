@@ -168,14 +168,14 @@ class Result(models.Model):
     term = models.CharField(max_length=10, choices=Term.choices)
     recorded_class = models.ForeignKey(Class, on_delete=models.SET_NULL, null=True, related_name='recorded_results')
 
-    # CA Scores (Continuous Assessment) - each worth 10 marks
+    # CA Scores (Continuous Assessment) - 3 tests, each worth 10 marks = 30 total
     ca1_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 1 (max 10 marks)")
     ca2_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 2 (max 10 marks)")
     ca3_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 3 (max 10 marks)")
-    ca4_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="CA Test 4 (max 10 marks)")
+    ca4_score = models.DecimalField(max_digits=4, decimal_places=2, default=0, help_text="Unused (kept for legacy)")
 
-    # Final Exam Score - worth 60 marks
-    exam_score = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Final Exam (max 60 marks)")
+    # Final Exam Score - worth 70 marks
+    exam_score = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Final Exam (max 70 marks)")
 
     # Calculated fields
     marks_obtained = models.DecimalField(max_digits=5, decimal_places=2, editable=False)
@@ -190,12 +190,11 @@ class Result(models.Model):
 
     def save(self, *args, **kwargs):
         """Calculate total marks obtained before saving"""
-        # CA scores total (40 marks max)
-        ca_total = (self.ca1_score + self.ca2_score + self.ca3_score + self.ca4_score)
-        # Exam score (60 marks max)
-        # Total marks obtained = CA total + Exam score
+        # CA scores total (30 marks max — 3 tests × 10)
+        ca_total = (self.ca1_score + self.ca2_score + self.ca3_score)
+        # Exam score (70 marks max)
         self.marks_obtained = ca_total + self.exam_score
-        self.total_marks = 100  # Always 100 (40 CA + 60 Exam)
+        self.total_marks = 100  # Always 100 (30 CA + 70 Exam)
 
         # Calculate grade based on percentage
         percentage = self.percentage
@@ -224,7 +223,7 @@ class Result(models.Model):
     @property
     def ca_total(self):
         """Calculate total CA marks"""
-        return self.ca1_score + self.ca2_score + self.ca3_score + self.ca4_score
+        return self.ca1_score + self.ca2_score + self.ca3_score
 
     @property
     def percentage(self):
