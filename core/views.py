@@ -1017,10 +1017,10 @@ def get_class_rankings(request):
                 )
 
         results = Result.objects.filter(
-            student__current_class_id=class_id_int,
+            Q(recorded_class_id=class_id_int) | Q(student__current_class_id=class_id_int),
             term=term,
             academic_year=academic_year_obj
-        ).select_related('student', 'subject', 'academic_year')
+        ).distinct().select_related('student', 'subject', 'academic_year')
 
         if not results:
             return Response({
