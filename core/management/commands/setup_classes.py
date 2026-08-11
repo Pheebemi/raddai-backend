@@ -4,6 +4,8 @@ from core.models import AcademicYear, Class
 
 CLASSES = [
     # (name, grade)
+    ('Nursery 1', -2),
+    ('Nursery 2', -1),
     ('Primary 1', 1),
     ('Primary 2', 2),
     ('Primary 3', 3),

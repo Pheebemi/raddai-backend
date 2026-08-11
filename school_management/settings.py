@@ -35,6 +35,7 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'laazeereacademy.pw,www.laazeere
 
 # Flutterwave — secret key lives only on the server, never in the frontend
 FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY', '')
+FLUTTERWAVE_WEBHOOK_HASH = os.environ.get('FLUTTERWAVE_WEBHOOK_HASH', '')
 
 
 # Application definition
@@ -91,19 +92,27 @@ WSGI_APPLICATION = 'school_management.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get('DB_NAME', ''),
-        'USER': os.environ.get('DB_USER', ''),
-        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '3306'),
-        'OPTIONS': {
-            'charset': 'utf8mb4',
-        },
+if os.environ.get('DB_NAME'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.environ.get('DB_NAME'),
+            'USER': os.environ.get('DB_USER'),
+            'PASSWORD': os.environ.get('DB_PASSWORD'),
+            'HOST': os.environ.get('DB_HOST', 'localhost'),
+            'PORT': os.environ.get('DB_PORT', '3306'),
+            'OPTIONS': {
+                'charset': 'utf8mb4',
+            },
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -155,6 +164,8 @@ CORS_ALLOWED_ORIGINS = [
     'https://www.laazeereacademy.com',
     'https://laazeereacademy.pw',
     'https://www.laazeereacademy.pw',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
 ]
 
 CORS_ALLOW_CREDENTIALS = True

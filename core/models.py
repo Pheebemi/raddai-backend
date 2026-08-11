@@ -1,3 +1,5 @@
+import secrets
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import RegexValidator
@@ -7,6 +9,32 @@ from django.utils import timezone
 def get_today():
     """Return today's date"""
     return timezone.now().date()
+
+
+class ClassLevel(models.IntegerChoices):
+    """
+    Every level the school admits into, Pre-Nursery through SS 3.
+
+    The integers match the `grade` values used by Class/FeeStructure so an
+    application can be lined up against a real class later. Levels only —
+    an applicant picks "JSS 1", never "JSS 1A"; sections are assigned on
+    enrolment. Keep in sync with CLASS_LEVELS in the frontend.
+    """
+    PRE_NURSERY = -3, 'Pre-Nursery'
+    NURSERY_1 = -2, 'Nursery 1'
+    NURSERY_2 = -1, 'Nursery 2'
+    PRIMARY_1 = 1, 'Primary 1'
+    PRIMARY_2 = 2, 'Primary 2'
+    PRIMARY_3 = 3, 'Primary 3'
+    PRIMARY_4 = 4, 'Primary 4'
+    PRIMARY_5 = 5, 'Primary 5'
+    PRIMARY_6 = 6, 'Primary 6'
+    JSS_1 = 7, 'JSS 1'
+    JSS_2 = 8, 'JSS 2'
+    JSS_3 = 9, 'JSS 3'
+    SS_1 = 10, 'SS 1'
+    SS_2 = 11, 'SS 2'
+    SS_3 = 12, 'SS 3'
 
 
 class User(AbstractUser):
@@ -373,3 +401,171 @@ class Attendance(models.Model):
 
     def __str__(self):
         return f"{self.student} - {self.date} ({self.status})"
+
+
+class AdmissionSetting(models.Model):
+    """Admission window for one academic year — management opens and closes it."""
+    academic_year = models.OneToOneField(
+        AcademicYear, on_delete=models.CASCADE, related_name='admission_setting'
+    )
+    is_open = models.BooleanField(default=False)
+    closes_on = models.DateField(null=True, blank=True)
+    instructions = models.TextField(
+        blank=True, help_text="Shown to applicants on the public admissions page"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Admissions {self.academic_year.name} ({'open' if self.is_open else 'closed'})"
+
+    @property
+    def accepting_applications(self):
+        """Open, and not past the closing date if one is set."""
+        if not self.is_open:
+            return False
+        if self.closes_on and get_today() > self.closes_on:
+            return False
+        return True
+
+
+class AdmissionFee(models.Model):
+    """Application fee for one level. Levels without a row cannot be applied to."""
+    setting = models.ForeignKey(AdmissionSetting, on_delete=models.CASCADE, related_name='fees')
+    level = models.IntegerField(choices=ClassLevel.choices)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        unique_together = ['setting', 'level']
+        ordering = ['level']
+
+    def __str__(self):
+        return f"{self.get_level_display()} - {self.amount}"
+
+
+def generate_application_reference():
+    """
+    Unguessable public reference, e.g. LAZ-2026-K7M3XQ.
+
+    Ambiguous characters (O/0, I/1, S/5) are left out so it survives being
+    read off a printed form over the phone. Hyphens rather than slashes so it
+    drops straight into a URL without encoding.
+    """
+    alphabet = 'ABCDEFGHJKLMNPQRTUVWXYZ23456789'
+    year = get_today().year
+    while True:
+        suffix = ''.join(secrets.choice(alphabet) for _ in range(6))
+        reference = f'LAZ-{year}-{suffix}'
+        if not Application.objects.filter(reference=reference).exists():
+            return reference
+
+
+class Application(models.Model):
+    """
+    An admission application. Deliberately has no User attached — an applicant
+    never gets an account. If the child actually turns up, management creates
+    the Student the normal way; applications that go nowhere stay inert rows.
+    """
+
+    class Status(models.TextChoices):
+        PENDING_PAYMENT = 'pending_payment', 'Awaiting Payment'
+        PAID = 'paid', 'Paid — Form Incomplete'
+        SUBMITTED = 'submitted', 'Submitted'
+        UNDER_REVIEW = 'under_review', 'Under Review'
+        ADMITTED = 'admitted', 'Admitted'
+        WAITLISTED = 'waitlisted', 'Waitlisted'
+        REJECTED = 'rejected', 'Not Offered'
+
+    class Gender(models.TextChoices):
+        MALE = 'male', 'Male'
+        FEMALE = 'female', 'Female'
+
+    reference = models.CharField(max_length=30, unique=True, editable=False)
+    academic_year = models.ForeignKey(
+        AcademicYear, on_delete=models.PROTECT, related_name='applications'
+    )
+    level = models.IntegerField(choices=ClassLevel.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING_PAYMENT)
+
+    # --- Step 1: captured before payment, and all that lookup needs ---
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    date_of_birth = models.DateField()
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=15)
+
+    # --- Payment ---
+    fee_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_id = models.CharField(max_length=100, blank=True, null=True, unique=True)
+    tx_ref = models.CharField(max_length=100, blank=True)
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+
+    # --- Step 2: the full form, filled after payment ---
+    middle_name = models.CharField(max_length=100, blank=True)
+    gender = models.CharField(max_length=10, choices=Gender.choices, blank=True)
+    nationality = models.CharField(max_length=100, blank=True, default='Nigerian')
+    state_of_origin = models.CharField(max_length=100, blank=True)
+    lga = models.CharField(max_length=100, blank=True)
+    religion = models.CharField(max_length=50, blank=True)
+    home_address = models.TextField(blank=True)
+    blood_group = models.CharField(max_length=10, blank=True)
+    genotype = models.CharField(max_length=10, blank=True)
+    medical_info = models.TextField(blank=True)
+
+    previous_school = models.CharField(max_length=200, blank=True)
+    previous_class = models.CharField(max_length=100, blank=True)
+    reason_for_leaving = models.TextField(blank=True)
+
+    guardian_name = models.CharField(max_length=200, blank=True)
+    guardian_relationship = models.CharField(max_length=50, blank=True)
+    guardian_phone = models.CharField(max_length=15, blank=True)
+    guardian_email = models.EmailField(blank=True)
+    guardian_occupation = models.CharField(max_length=200, blank=True)
+    guardian_address = models.TextField(blank=True)
+
+    passport_photo = models.ImageField(upload_to='admissions/photos/', blank=True, null=True)
+
+    # --- Timestamps / decision ---
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_saved_at = models.DateTimeField(auto_now=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    decided_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='admission_decisions'
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['contact_phone', 'date_of_birth']),
+            models.Index(fields=['contact_email', 'date_of_birth']),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = generate_application_reference()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.reference} - {self.full_name} ({self.get_level_display()})"
+
+    @property
+    def full_name(self):
+        parts = [self.first_name, self.middle_name, self.last_name]
+        return ' '.join(p for p in parts if p)
+
+    @property
+    def is_paid(self):
+        return self.paid_at is not None
+
+    # Fields an applicant must fill before the form counts as complete.
+    REQUIRED_FORM_FIELDS = [
+        'gender', 'state_of_origin', 'lga', 'home_address',
+        'guardian_name', 'guardian_relationship', 'guardian_phone', 'guardian_address',
+    ]
+
+    def missing_fields(self):
+        """Which required fields are still blank — drives the 'form not completed' message."""
+        return [f for f in self.REQUIRED_FORM_FIELDS if not getattr(self, f)]

@@ -3,18 +3,22 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
-    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance
+    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance,
+    AdmissionSetting, AdmissionFee, Application, ClassLevel
 )
 from .serializers import (
     UserSerializer, LoginSerializer, AcademicYearSerializer,
     ClassSerializer, SubjectSerializer, StudentSerializer,
     StaffSerializer, ParentSerializer, ResultSerializer,
     FeeStructureSerializer, FeePaymentSerializer, StaffSalarySerializer,
-    AnnouncementSerializer, AttendanceSerializer
+    AnnouncementSerializer, AttendanceSerializer,
+    AdmissionSettingSerializer, AdmissionFeeSerializer,
+    ApplicationSerializer, ApplicationListSerializer,
+    ApplicationStartSerializer, ApplicationFormSerializer
 )
 
 
@@ -1499,3 +1503,498 @@ def dashboard_stats(request):
             stats = {'error': 'Parent profile not found'}
 
     return Response(stats)
+
+
+# ==========================================================================
+# Admissions — public endpoints
+#
+# Applicants have no account, so everything below is AllowAny. Access to a
+# specific application is gated on knowing the reference, or on matching
+# email/phone together with the child's date of birth.
+# ==========================================================================
+
+
+def _open_admission_setting():
+    """The admission window for the active academic year, if there is one."""
+    return AdmissionSetting.objects.filter(
+        academic_year__is_active=True
+    ).select_related('academic_year').first()
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def admission_info(request):
+    """Public: is admission open, and what does each level cost?"""
+    setting = _open_admission_setting()
+
+    if not setting:
+        return Response({'is_open': False, 'instructions': '', 'levels': []})
+
+    fees = {fee.level: fee.amount for fee in setting.fees.all()}
+    levels = [
+        {'value': value, 'label': label, 'fee': float(fees[value])}
+        for value, label in ClassLevel.choices
+        if value in fees
+    ]
+
+    return Response({
+        'is_open': setting.accepting_applications,
+        'academic_year': setting.academic_year.name,
+        'closes_on': setting.closes_on,
+        'instructions': setting.instructions,
+        'levels': levels,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def start_application(request):
+    """
+    Step 1. Creates the application in `pending_payment` and hands back the
+    reference plus the amount to charge. The reference exists before payment
+    so a dropped connection mid-checkout is always recoverable.
+    """
+    serializer = ApplicationStartSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    setting = data.pop('_setting')
+    fee = data.pop('_fee')
+
+    application = Application.objects.create(
+        academic_year=setting.academic_year,
+        fee_amount=fee.amount,
+        **data
+    )
+
+    return Response({
+        'reference': application.reference,
+        'status': application.status,
+        'fee_amount': float(application.fee_amount),
+        'full_name': application.full_name,
+        'level_display': application.get_level_display(),
+        'contact_email': application.contact_email,
+        'contact_phone': application.contact_phone,
+    }, status=status.HTTP_201_CREATED)
+
+
+def _mark_application_paid(application, transaction_id, amount, tx_ref=''):
+    """Shared by the browser-side verify and the webhook. Idempotent."""
+    if application.paid_at:
+        return application
+
+    application.transaction_id = str(transaction_id)
+    application.tx_ref = tx_ref or application.tx_ref
+    application.amount_paid = amount
+    application.paid_at = timezone.now()
+    if application.status == Application.Status.PENDING_PAYMENT:
+        application.status = Application.Status.PAID
+    application.save()
+    return application
+
+
+def _verify_with_flutterwave(transaction_id):
+    """Ask Flutterwave whether a transaction really succeeded. Returns tx data or None."""
+    import requests as http_requests
+    from django.conf import settings as django_settings
+
+    secret_key = getattr(django_settings, 'FLUTTERWAVE_SECRET_KEY', '')
+    if not secret_key:
+        return None
+
+    try:
+        response = http_requests.get(
+            f'https://api.flutterwave.com/v3/transactions/{transaction_id}/verify',
+            headers={'Authorization': f'Bearer {secret_key}'},
+            timeout=30,
+        )
+    except Exception:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    payload = response.json()
+    if payload.get('status') != 'success':
+        return None
+
+    tx_data = payload.get('data', {})
+    if tx_data.get('status') not in ['successful', 'completed']:
+        return None
+    if tx_data.get('currency') != 'NGN':
+        return None
+
+    return tx_data
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def verify_application_payment(request):
+    """
+    Called by the applicant's browser after Flutterwave checkout closes.
+    The webhook below is the authoritative path — this one just makes the
+    happy case feel instant.
+    """
+    transaction_id = request.data.get('transaction_id')
+    reference = request.data.get('reference')
+
+    if not transaction_id or not reference:
+        return Response(
+            {'error': 'transaction_id and reference are required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    application = Application.objects.filter(reference=reference).first()
+    if not application:
+        return Response({'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Already settled, most likely by the webhook getting there first.
+    if application.paid_at:
+        return Response(ApplicationSerializer(application, context={'request': request}).data)
+
+    tx_data = _verify_with_flutterwave(transaction_id)
+    if not tx_data:
+        return Response(
+            {'error': 'Transaction could not be verified'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    verified_amount = float(tx_data.get('amount', 0))
+    if abs(verified_amount - float(application.fee_amount)) > 1:
+        return Response(
+            {'error': 'Amount paid does not match the application fee'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    _mark_application_paid(
+        application, transaction_id, verified_amount, tx_data.get('tx_ref', '')
+    )
+    return Response(ApplicationSerializer(application, context={'request': request}).data)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def application_payment_webhook(request):
+    """
+    Flutterwave calls this server-to-server. This is what makes a lost
+    connection survivable: the payment lands here regardless of whether the
+    applicant's browser ever made it back to the site.
+    """
+    from django.conf import settings as django_settings
+
+    webhook_hash = getattr(django_settings, 'FLUTTERWAVE_WEBHOOK_HASH', '')
+    if webhook_hash and request.headers.get('verif-hash', '') != webhook_hash:
+        return Response({'error': 'Invalid webhook signature'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    data = request.data
+    if data.get('event') != 'charge.completed':
+        return Response({'status': 'ignored'})
+
+    tx_data = data.get('data', {})
+    if tx_data.get('status') not in ['successful', 'completed']:
+        return Response({'status': 'ignored'})
+    if tx_data.get('currency') != 'NGN':
+        return Response({'status': 'ignored'})
+
+    transaction_id = tx_data.get('id')
+    tx_ref = tx_data.get('tx_ref', '')
+
+    if not transaction_id:
+        return Response({'error': 'No transaction ID'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if Application.objects.filter(transaction_id=str(transaction_id)).exists():
+        return Response({'status': 'already_recorded'})
+
+    # The frontend sets tx_ref to the application reference at checkout.
+    application = Application.objects.filter(reference=tx_ref).first()
+    if not application:
+        # Not an admission payment — the fee-payment webhook handles those.
+        return Response({'status': 'ignored'})
+
+    verified = _verify_with_flutterwave(transaction_id)
+    if not verified:
+        return Response({'status': 'verification_failed'})
+
+    _mark_application_paid(
+        application, transaction_id, float(verified.get('amount', 0)), tx_ref
+    )
+    return Response({'status': 'recorded'})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def lookup_application(request):
+    """
+    Return to a form later. Email or phone, plus the child's date of birth —
+    the DOB keeps someone who merely knows a phone number from pulling up
+    another family's details. Siblings share contacts but differ by DOB.
+    """
+    identifier = (request.data.get('identifier') or '').strip()
+    date_of_birth = request.data.get('date_of_birth')
+
+    if not identifier or not date_of_birth:
+        return Response(
+            {'error': "Enter the email or phone number used to apply, along with the date of birth."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    applications = Application.objects.filter(
+        Q(contact_email__iexact=identifier) | Q(contact_phone=identifier),
+        date_of_birth=date_of_birth,
+    ).order_by('-created_at')
+
+    if not applications.exists():
+        return Response(
+            {'error': 'No application found for those details. Check the email or phone number and try again.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    results = [{
+        'reference': app.reference,
+        'full_name': app.full_name,
+        'level_display': app.get_level_display(),
+        'status': app.status,
+        'status_display': app.get_status_display(),
+        'is_paid': app.is_paid,
+        'fee_amount': float(app.fee_amount),
+        'missing_fields': app.missing_fields(),
+        'can_print': bool(app.submitted_at),
+    } for app in applications]
+
+    return Response({'applications': results})
+
+
+def _get_application_or_error(reference):
+    application = Application.objects.filter(reference=reference).first()
+    if not application:
+        return None, Response(
+            {'error': 'Application not found'}, status=status.HTTP_404_NOT_FOUND
+        )
+    return application, None
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def application_detail(request, reference):
+    """Fetch one application by reference — used by the form and the printable page."""
+    application, error = _get_application_or_error(reference)
+    if error:
+        return error
+    return Response(ApplicationSerializer(application, context={'request': request}).data)
+
+
+@api_view(['PATCH'])
+@permission_classes([permissions.AllowAny])
+def save_application_form(request, reference):
+    """
+    Autosave. Only works once the fee is paid, and locks after submission so a
+    printed form cannot be edited out from under management.
+    """
+    application, error = _get_application_or_error(reference)
+    if error:
+        return error
+
+    if not application.is_paid:
+        return Response(
+            {'error': 'The application fee has not been paid yet.'},
+            status=status.HTTP_402_PAYMENT_REQUIRED
+        )
+
+    if application.submitted_at:
+        return Response(
+            {'error': 'This application has already been submitted and can no longer be edited.'},
+            status=status.HTTP_409_CONFLICT
+        )
+
+    serializer = ApplicationFormSerializer(application, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+
+    application.refresh_from_db()
+    return Response({
+        'saved_at': application.last_saved_at,
+        'missing_fields': application.missing_fields(),
+    })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def submit_application(request, reference):
+    """Final submit — refuses while any required field is still blank."""
+    application, error = _get_application_or_error(reference)
+    if error:
+        return error
+
+    if not application.is_paid:
+        return Response(
+            {'error': 'The application fee has not been paid yet.'},
+            status=status.HTTP_402_PAYMENT_REQUIRED
+        )
+
+    if application.submitted_at:
+        return Response(ApplicationSerializer(application, context={'request': request}).data)
+
+    missing = application.missing_fields()
+    if missing:
+        return Response(
+            {'error': 'Some required fields are still empty.', 'missing_fields': missing},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    application.status = Application.Status.SUBMITTED
+    application.submitted_at = timezone.now()
+    application.save()
+
+    return Response(ApplicationSerializer(application, context={'request': request}).data)
+
+
+# ==========================================================================
+# Admissions — management endpoints
+# ==========================================================================
+
+
+class AdmissionSettingViewSet(viewsets.ModelViewSet):
+    """Open/close the admission window and set the fee for each level."""
+    queryset = AdmissionSetting.objects.select_related('academic_year').prefetch_related('fees')
+    serializer_class = AdmissionSettingSerializer
+    permission_classes = [IsManagementOrAdmin]
+
+    @action(detail=True, methods=['put'])
+    def fees(self, request, pk=None):
+        """
+        Replace the whole fee table in one call. Body: {"fees": [{"level": 7,
+        "amount": "15000"}, ...]}. Levels left out become unavailable to apply to.
+        """
+        setting = self.get_object()
+        rows = request.data.get('fees', [])
+
+        if not isinstance(rows, list):
+            return Response(
+                {'error': 'fees must be a list'}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        valid_levels = {value for value, _ in ClassLevel.choices}
+        cleaned = []
+        for row in rows:
+            level = row.get('level')
+            amount = row.get('amount')
+            if level not in valid_levels:
+                return Response(
+                    {'error': f'Unknown class level: {level}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': f'Invalid amount for level {level}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if amount < 0:
+                return Response(
+                    {'error': f'Amount for level {level} cannot be negative'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            cleaned.append({'level': level, 'amount': amount})
+
+        setting.fees.all().delete()
+        AdmissionFee.objects.bulk_create([
+            AdmissionFee(setting=setting, level=row['level'], amount=row['amount'])
+            for row in cleaned
+        ])
+
+        setting.refresh_from_db()
+        return Response(AdmissionSettingSerializer(setting).data)
+
+
+class ApplicationViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Management review of admission applications. Read-only plus a decision
+    action — nobody edits an applicant's answers on their behalf.
+    """
+    queryset = Application.objects.select_related('academic_year', 'decided_by')
+    permission_classes = [IsManagementOrAdmin]
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ApplicationListSerializer
+        return ApplicationSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        params = self.request.query_params
+
+        status_filter = params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        level = params.get('level')
+        if level:
+            queryset = queryset.filter(level=level)
+
+        academic_year = params.get('academic_year')
+        if academic_year:
+            queryset = queryset.filter(academic_year_id=academic_year)
+
+        search = params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(reference__icontains=search)
+                | Q(contact_phone__icontains=search)
+                | Q(contact_email__icontains=search)
+            )
+
+        return queryset
+
+    @action(detail=True, methods=['post'])
+    def decision(self, request, pk=None):
+        """Record an admit / waitlist / reject decision, or send it back to review."""
+        application = self.get_object()
+        decision = request.data.get('decision')
+
+        allowed = [
+            Application.Status.UNDER_REVIEW,
+            Application.Status.ADMITTED,
+            Application.Status.WAITLISTED,
+            Application.Status.REJECTED,
+        ]
+        if decision not in allowed:
+            return Response(
+                {'error': f'decision must be one of: {", ".join(allowed)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not application.submitted_at:
+            return Response(
+                {'error': 'This application has not been submitted yet.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        application.status = decision
+        application.decision_note = request.data.get('note', '')
+        application.decided_by = request.user
+        application.decided_at = timezone.now()
+        application.save()
+
+        return Response(ApplicationSerializer(application, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Counts per status for the dashboard cards."""
+        queryset = self.get_queryset()
+        counts = {
+            row['status']: row['total']
+            for row in queryset.values('status').annotate(total=Count('id'))
+        }
+
+        return Response({
+            'total': queryset.count(),
+            'by_status': {
+                value: counts.get(value, 0) for value, _ in Application.Status.choices
+            },
+            'total_collected': float(
+                queryset.aggregate(total=Sum('amount_paid'))['total'] or 0
+            ),
+        })

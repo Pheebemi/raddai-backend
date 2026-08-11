@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
-    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance
+    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance,
+    AdmissionSetting, AdmissionFee, Application, ClassLevel, get_today
 )
 
 
@@ -384,3 +385,119 @@ class AttendanceSerializer(serializers.ModelSerializer):
         if obj.marked_by:
             return obj.marked_by.user.get_full_name()
         return None
+
+
+class AdmissionFeeSerializer(serializers.ModelSerializer):
+    """Serializer for AdmissionFee model"""
+    level_display = serializers.CharField(source='get_level_display', read_only=True)
+
+    class Meta:
+        model = AdmissionFee
+        fields = ['id', 'setting', 'level', 'level_display', 'amount']
+        read_only_fields = ['setting']
+
+
+class AdmissionSettingSerializer(serializers.ModelSerializer):
+    """Serializer for AdmissionSetting model"""
+    fees = AdmissionFeeSerializer(many=True, read_only=True)
+    academic_year_name = serializers.CharField(source='academic_year.name', read_only=True)
+    accepting_applications = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = AdmissionSetting
+        fields = [
+            'id', 'academic_year', 'academic_year_name', 'is_open', 'closes_on',
+            'instructions', 'fees', 'accepting_applications', 'updated_at',
+        ]
+
+
+class ApplicationStartSerializer(serializers.Serializer):
+    """
+    Step 1 — the little bit collected before payment. Nothing is written until
+    the level has a fee and the admission window is actually open.
+    """
+    first_name = serializers.CharField(max_length=100)
+    last_name = serializers.CharField(max_length=100)
+    date_of_birth = serializers.DateField()
+    contact_email = serializers.EmailField(required=False, allow_blank=True)
+    contact_phone = serializers.CharField(max_length=15)
+    level = serializers.ChoiceField(choices=ClassLevel.choices)
+
+    def validate(self, attrs):
+        setting = AdmissionSetting.objects.filter(
+            academic_year__is_active=True
+        ).select_related('academic_year').first()
+
+        if not setting or not setting.accepting_applications:
+            raise serializers.ValidationError('Admissions are not currently open.')
+
+        fee = setting.fees.filter(level=attrs['level']).first()
+        if not fee:
+            raise serializers.ValidationError(
+                'No application fee has been set for the selected class.'
+            )
+
+        if attrs['date_of_birth'] > get_today():
+            raise serializers.ValidationError({'date_of_birth': 'Date of birth cannot be in the future.'})
+
+        attrs['_setting'] = setting
+        attrs['_fee'] = fee
+        return attrs
+
+
+class ApplicationFormSerializer(serializers.ModelSerializer):
+    """
+    Step 2 — the full form. Only the after-payment fields are writable; the
+    identity and payment fields are locked once the fee is paid.
+    """
+
+    class Meta:
+        model = Application
+        fields = [
+            'middle_name', 'gender', 'nationality', 'state_of_origin', 'lga',
+            'religion', 'home_address', 'blood_group', 'genotype', 'medical_info',
+            'previous_school', 'previous_class', 'reason_for_leaving',
+            'guardian_name', 'guardian_relationship', 'guardian_phone',
+            'guardian_email', 'guardian_occupation', 'guardian_address',
+            'passport_photo',
+        ]
+
+
+class ApplicationSerializer(serializers.ModelSerializer):
+    """Full read serializer — used for the printable form and management review."""
+    full_name = serializers.CharField(read_only=True)
+    level_display = serializers.CharField(source='get_level_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    academic_year_name = serializers.CharField(source='academic_year.name', read_only=True)
+    missing_fields = serializers.SerializerMethodField()
+    decided_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Application
+        fields = '__all__'
+        read_only_fields = [
+            'reference', 'status', 'fee_amount', 'transaction_id', 'tx_ref',
+            'amount_paid', 'paid_at', 'created_at', 'submitted_at',
+            'decided_by', 'decided_at',
+        ]
+
+    def get_missing_fields(self, obj):
+        return obj.missing_fields()
+
+    def get_decided_by_name(self, obj):
+        return obj.decided_by.get_full_name() if obj.decided_by else None
+
+
+class ApplicationListSerializer(serializers.ModelSerializer):
+    """Trimmed serializer for the management list view."""
+    full_name = serializers.CharField(read_only=True)
+    level_display = serializers.CharField(source='get_level_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = Application
+        fields = [
+            'id', 'reference', 'full_name', 'level', 'level_display',
+            'status', 'status_display', 'contact_phone', 'contact_email',
+            'amount_paid', 'paid_at', 'submitted_at', 'created_at',
+        ]

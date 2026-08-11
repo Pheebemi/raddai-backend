@@ -18,6 +18,8 @@ router.register(r'fee-payments', views.FeePaymentViewSet)
 router.register(r'staff-salaries', views.StaffSalaryViewSet)
 router.register(r'announcements', views.AnnouncementViewSet)
 router.register(r'attendance', views.AttendanceViewSet)
+router.register(r'admission-settings', views.AdmissionSettingViewSet)
+router.register(r'applications', views.ApplicationViewSet)
 
 # URL patterns
 urlpatterns = [
@@ -48,5 +50,15 @@ urlpatterns = [
 
     # Get per-term fee for current student
     path('fees/student-term-fee/', views.get_student_term_fee, name='student_term_fee'),
+
+    # Admissions — public, no authentication. Applicants never get an account.
+    path('admissions/info/', views.admission_info, name='admission_info'),
+    path('admissions/start/', views.start_application, name='start_application'),
+    path('admissions/verify-payment/', views.verify_application_payment, name='verify_application_payment'),
+    path('admissions/webhook/', views.application_payment_webhook, name='application_webhook'),
+    path('admissions/lookup/', views.lookup_application, name='lookup_application'),
+    path('admissions/<str:reference>/save/', views.save_application_form, name='save_application'),
+    path('admissions/<str:reference>/submit/', views.submit_application, name='submit_application'),
+    path('admissions/<str:reference>/', views.application_detail, name='application_detail'),
 
 ]

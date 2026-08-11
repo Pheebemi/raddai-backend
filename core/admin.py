@@ -1,10 +1,12 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from django import forms
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
-    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance
+    Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance,
+    AdmissionSetting, AdmissionFee, Application
 )
 
 
@@ -472,3 +474,166 @@ class AttendanceAdmin(admin.ModelAdmin):
     list_filter = ('status', 'date', 'class_period')
     search_fields = ('student__user__first_name', 'student__user__last_name')
     raw_id_fields = ('student', 'class_period', 'marked_by')
+
+
+class AdmissionFeeInline(admin.TabularInline):
+    """Fees are edited alongside the window they belong to."""
+    model = AdmissionFee
+    extra = 1
+    fields = ('level', 'amount')
+
+
+@admin.register(AdmissionSetting)
+class AdmissionSettingAdmin(admin.ModelAdmin):
+    list_display = ('academic_year', 'is_open', 'accepting_applications', 'closes_on', 'get_fee_count')
+    list_filter = ('is_open', 'academic_year')
+    raw_id_fields = ('academic_year',)
+    inlines = [AdmissionFeeInline]
+
+    fieldsets = (
+        ('Session', {'fields': ('academic_year',)}),
+        ('Window', {
+            'fields': ('is_open', 'closes_on'),
+            'description': 'Applications stop automatically once the closing date passes.',
+        }),
+        ('Public page', {
+            'fields': ('instructions',),
+            'description': 'Shown to applicants before they begin.',
+        }),
+    )
+
+    @admin.display(boolean=True, description='Accepting now')
+    def accepting_applications(self, obj):
+        return obj.accepting_applications
+
+    @admin.display(description='Classes offered')
+    def get_fee_count(self, obj):
+        return obj.fees.count()
+
+
+@admin.register(AdmissionFee)
+class AdmissionFeeAdmin(admin.ModelAdmin):
+    list_display = ('setting', 'level', 'amount')
+    list_filter = ('setting__academic_year', 'level')
+
+
+@admin.register(Application)
+class ApplicationAdmin(admin.ModelAdmin):
+    """
+    Applications are read-mostly here: applicants have no account, and their
+    own answers should not be rewritten on their behalf. Only the decision
+    fields are editable.
+    """
+    list_display = (
+        'reference', 'get_full_name', 'level', 'status',
+        'is_paid', 'submitted_at', 'created_at',
+    )
+    list_filter = ('status', 'level', 'academic_year', 'gender')
+    search_fields = (
+        'reference', 'first_name', 'last_name',
+        'contact_phone', 'contact_email', 'guardian_name', 'transaction_id',
+    )
+    date_hierarchy = 'created_at'
+    raw_id_fields = ('academic_year', 'decided_by')
+    ordering = ('-created_at',)
+
+    readonly_fields = (
+        'reference', 'academic_year', 'level', 'first_name', 'last_name',
+        'middle_name', 'date_of_birth', 'contact_email', 'contact_phone',
+        'fee_amount', 'transaction_id', 'tx_ref', 'amount_paid', 'paid_at',
+        'gender', 'nationality', 'state_of_origin', 'lga', 'religion',
+        'home_address', 'blood_group', 'genotype', 'medical_info',
+        'previous_school', 'previous_class', 'reason_for_leaving',
+        'guardian_name', 'guardian_relationship', 'guardian_phone',
+        'guardian_email', 'guardian_occupation', 'guardian_address',
+        'passport_photo', 'created_at', 'last_saved_at', 'submitted_at',
+        'get_missing_fields',
+    )
+
+    fieldsets = (
+        ('Application', {
+            'fields': (
+                'reference', 'academic_year', 'level', 'status',
+                'created_at', 'submitted_at', 'get_missing_fields',
+            )
+        }),
+        ('Applicant', {
+            'fields': (
+                'first_name', 'middle_name', 'last_name', 'date_of_birth',
+                'gender', 'nationality', 'state_of_origin', 'lga', 'religion',
+                'home_address', 'blood_group', 'genotype', 'medical_info',
+                'passport_photo',
+            )
+        }),
+        ('Contact', {'fields': ('contact_phone', 'contact_email')}),
+        ('Previous school', {
+            'fields': ('previous_school', 'previous_class', 'reason_for_leaving'),
+            'classes': ('collapse',),
+        }),
+        ('Parent / Guardian', {
+            'fields': (
+                'guardian_name', 'guardian_relationship', 'guardian_phone',
+                'guardian_email', 'guardian_occupation', 'guardian_address',
+            )
+        }),
+        ('Payment', {
+            'fields': ('fee_amount', 'amount_paid', 'paid_at', 'transaction_id', 'tx_ref'),
+        }),
+        ('Decision', {
+            'fields': ('decision_note', 'decided_by', 'decided_at'),
+            'description': 'Recording a decision here does NOT create a login. '
+                           'Enrol admitted applicants from the Students page.',
+        }),
+    )
+
+    actions = ['mark_under_review', 'mark_admitted', 'mark_waitlisted', 'mark_rejected']
+
+    @admin.display(description='Name', ordering='last_name')
+    def get_full_name(self, obj):
+        return obj.full_name
+
+    @admin.display(boolean=True, description='Paid')
+    def is_paid(self, obj):
+        return obj.is_paid
+
+    @admin.display(description='Still missing')
+    def get_missing_fields(self, obj):
+        missing = obj.missing_fields()
+        return ', '.join(missing) if missing else 'Nothing — form is complete'
+
+    def has_add_permission(self, request):
+        """Applications only ever come in through the public form."""
+        return False
+
+    def _set_status(self, request, queryset, status, label):
+        # Only submitted applications can be decided on, same rule as the API.
+        undecidable = queryset.filter(submitted_at__isnull=True).count()
+        decidable = queryset.filter(submitted_at__isnull=False)
+
+        updated = decidable.update(
+            status=status, decided_by=request.user, decided_at=timezone.now()
+        )
+
+        self.message_user(request, f'{updated} application(s) marked {label}.')
+        if undecidable:
+            self.message_user(
+                request,
+                f'{undecidable} skipped — not submitted yet.',
+                level='warning',
+            )
+
+    @admin.action(description='Mark selected as under review')
+    def mark_under_review(self, request, queryset):
+        self._set_status(request, queryset, Application.Status.UNDER_REVIEW, 'under review')
+
+    @admin.action(description='Admit selected applicants')
+    def mark_admitted(self, request, queryset):
+        self._set_status(request, queryset, Application.Status.ADMITTED, 'admitted')
+
+    @admin.action(description='Waitlist selected applicants')
+    def mark_waitlisted(self, request, queryset):
+        self._set_status(request, queryset, Application.Status.WAITLISTED, 'waitlisted')
+
+    @admin.action(description='Mark selected as not offered')
+    def mark_rejected(self, request, queryset):
+        self._set_status(request, queryset, Application.Status.REJECTED, 'not offered')
