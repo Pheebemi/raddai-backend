@@ -31,10 +31,12 @@ urlpatterns = [
 # but not media/. On this hosting there is no separate media alias, so Django
 # serves them itself — fine at this volume, and the alternative is broken
 # images. If a web-server alias for /media/ is ever configured, drop this.
+def serve_media(request, path):
+    # MEDIA_ROOT is read per request rather than baked into the URLconf at
+    # import time, so tests can point it somewhere temporary.
+    return serve(request, path, document_root=settings.MEDIA_ROOT)
+
+
 urlpatterns += [
-    re_path(
-        r'^media/(?P<path>.*)$',
-        serve,
-        {'document_root': settings.MEDIA_ROOT},
-    ),
+    re_path(r'^media/(?P<path>.*)$', serve_media),
 ]

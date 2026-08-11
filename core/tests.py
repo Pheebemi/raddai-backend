@@ -299,6 +299,68 @@ class AdmissionFlowTests(APITestCase):
         self.assertEqual(served.status_code, 200)
         served.close()
 
+    def test_fee_webhook_routes_admission_payments(self):
+        """
+        Flutterwave allows one webhook URL per account and the fee endpoint is
+        the one registered, so admission payments must be handled there too.
+        """
+        from unittest.mock import patch
+
+        reference = self.start_application().json()['reference']
+
+        payload = {
+            'event': 'charge.completed',
+            'data': {
+                'id': 55501,
+                'tx_ref': reference,
+                'status': 'successful',
+                'currency': 'NGN',
+                'amount': 15000,
+            },
+        }
+
+        with patch(
+            'core.views._verify_with_flutterwave',
+            return_value={'amount': 15000, 'status': 'successful', 'currency': 'NGN'},
+        ):
+            response = self.client.post(
+                '/api/payments/webhook/', payload, content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['status'], 'recorded')
+
+        application = Application.objects.get(reference=reference)
+        self.assertIsNotNone(application.paid_at)
+        self.assertEqual(application.status, 'paid')
+        self.assertEqual(application.transaction_id, '55501')
+
+    def test_fee_webhook_replay_does_not_double_record(self):
+        from unittest.mock import patch
+
+        reference = self.start_application().json()['reference']
+        payload = {
+            'event': 'charge.completed',
+            'data': {
+                'id': 55502, 'tx_ref': reference, 'status': 'successful',
+                'currency': 'NGN', 'amount': 15000,
+            },
+        }
+
+        with patch(
+            'core.views._verify_with_flutterwave',
+            return_value={'amount': 15000, 'status': 'successful', 'currency': 'NGN'},
+        ):
+            first = self.client.post(
+                '/api/payments/webhook/', payload, content_type='application/json',
+            )
+            second = self.client.post(
+                '/api/payments/webhook/', payload, content_type='application/json',
+            )
+
+        self.assertEqual(first.json()['status'], 'recorded')
+        self.assertEqual(second.json()['status'], 'already_recorded')
+
     def test_unknown_reference_is_404(self):
         response = self.client.get('/api/admissions/LAZ-2026-NOPE99/')
         self.assertEqual(response.status_code, 404)

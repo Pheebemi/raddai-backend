@@ -711,6 +711,24 @@ def flutterwave_webhook(request):
     if not transaction_id:
         return Response({'error': 'No transaction ID'}, status=status.HTTP_400_BAD_REQUEST)
 
+    # Admission fees arrive here too. Flutterwave allows only one webhook URL
+    # per account, and this is the one already registered — so route anything
+    # whose tx_ref is an application reference to the admissions handler
+    # instead of letting it fall through the school-fee logic below.
+    application = Application.objects.filter(reference=tx_ref).first()
+    if application:
+        if application.paid_at:
+            return Response({'status': 'already_recorded'})
+
+        verified = _verify_with_flutterwave(transaction_id)
+        if not verified:
+            return Response({'status': 'verification_failed'})
+
+        _mark_application_paid(
+            application, transaction_id, float(verified.get('amount', 0)), tx_ref
+        )
+        return Response({'status': 'recorded'})
+
     # Idempotency — already recorded
     if FeePayment.objects.filter(transaction_id=str(transaction_id)).exists():
         return Response({'status': 'already_recorded'})
