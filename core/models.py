@@ -523,6 +523,21 @@ class Application(models.Model):
     guardian_email = models.EmailField(blank=True)
     guardian_occupation = models.CharField(max_length=200, blank=True)
     guardian_address = models.TextField(blank=True)
+    father_phone = models.CharField(max_length=15, blank=True)
+    mother_phone = models.CharField(max_length=15, blank=True)
+
+    # --- Undertaking, required before submission — mirrors the signed paper form ---
+    agrees_to_school_authority = models.BooleanField(
+        default=False,
+        help_text=(
+            "Parent/guardian agrees to raise concerns with the school authority "
+            "rather than confronting staff directly or involving outside parties."
+        ),
+    )
+    confirms_rules_read = models.BooleanField(
+        default=False,
+        help_text="Parent/guardian confirms having read and understood the school's rules.",
+    )
 
     passport_photo = models.ImageField(upload_to='admissions/photos/', blank=True, null=True)
 
@@ -564,6 +579,7 @@ class Application(models.Model):
     REQUIRED_FORM_FIELDS = [
         'gender', 'state_of_origin', 'lga', 'home_address',
         'guardian_name', 'guardian_relationship', 'guardian_phone', 'guardian_address',
+        'agrees_to_school_authority', 'confirms_rules_read',
     ]
 
     def missing_fields(self):

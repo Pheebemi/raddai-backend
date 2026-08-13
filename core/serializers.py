@@ -459,6 +459,8 @@ class ApplicationFormSerializer(serializers.ModelSerializer):
             'previous_school', 'previous_class', 'reason_for_leaving',
             'guardian_name', 'guardian_relationship', 'guardian_phone',
             'guardian_email', 'guardian_occupation', 'guardian_address',
+            'father_phone', 'mother_phone',
+            'agrees_to_school_authority', 'confirms_rules_read',
             'passport_photo',
         ]
 
