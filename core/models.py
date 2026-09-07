@@ -132,10 +132,20 @@ class Subject(models.Model):
 
 class Student(models.Model):
     """Student profile model"""
+    class Gender(models.TextChoices):
+        MALE = 'male', 'Male'
+        FEMALE = 'female', 'Female'
+
+    class Department(models.TextChoices):
+        SCIENCE = 'science', 'Science'
+        ARTS = 'arts', 'Arts'
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
     student_id = models.CharField(max_length=20, unique=True)
     admission_date = models.DateField(default=get_today)
     current_class = models.ForeignKey(Class, on_delete=models.SET_NULL, null=True, related_name='students')
+    gender = models.CharField(max_length=10, choices=Gender.choices, blank=True, default='')
+    department = models.CharField(max_length=10, choices=Department.choices, blank=True, default='')
     emergency_contact_name = models.CharField(max_length=100, blank=True)
     emergency_contact_phone = models.CharField(max_length=15, blank=True)
     medical_info = models.TextField(blank=True)
@@ -264,6 +274,14 @@ class Result(models.Model):
 class FeeStructure(models.Model):
     """Fee structure for different classes"""
 
+    class Gender(models.TextChoices):
+        MALE = 'male', 'Male'
+        FEMALE = 'female', 'Female'
+
+    class Department(models.TextChoices):
+        SCIENCE = 'science', 'Science'
+        ARTS = 'arts', 'Arts'
+
     class FeeType(models.TextChoices):
         TUITION = 'tuition', 'Tuition Fee'
         EXAMINATION = 'examination', 'Examination Fee'
@@ -274,11 +292,13 @@ class FeeStructure(models.Model):
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE)
     grade = models.IntegerField()  # Applicable grade
     fee_type = models.CharField(max_length=20, choices=FeeType.choices)
+    gender = models.CharField(max_length=10, choices=Gender.choices, blank=True, default='')
+    department = models.CharField(max_length=10, choices=Department.choices, blank=True, default='')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.CharField(max_length=200, blank=True)
 
     class Meta:
-        unique_together = ['academic_year', 'grade', 'fee_type']
+        unique_together = ['academic_year', 'grade', 'fee_type', 'gender', 'department']
 
     def __str__(self):
         return f"Grade {self.grade} - {self.fee_type} ({self.academic_year})"

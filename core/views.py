@@ -465,7 +465,10 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
                     academic_year=academic_year,
                     grade=grade,
                     fee_type=FeeStructure.FeeType.TUITION,
-                )
+                ).filter(
+                    Q(gender=student.gender, department=student.department)
+                    | Q(gender='', department='')
+                ).order_by('-gender', '-department')
                 resolved_fee_structure = fs_qs.first() or fee_structure
                 if resolved_fee_structure and getattr(resolved_fee_structure, 'amount', None) is not None:
                     full_amount = resolved_fee_structure.amount
@@ -1270,7 +1273,10 @@ def get_student_term_fee(request):
             academic_year=academic_year,
             grade=grade,
             fee_type=FeeStructure.FeeType.TUITION,
-        ).first()
+        ).filter(
+            Q(gender=student.gender, department=student.department)
+            | Q(gender='', department='')
+        ).order_by('-gender', '-department').first()
 
         if not fee_structure:
             return Response({'fee': None, 'reason': 'no_fee_structure'})
@@ -1278,6 +1284,8 @@ def get_student_term_fee(request):
         return Response({
             'fee': float(fee_structure.amount),
             'grade': grade,
+            'gender': student.gender,
+            'department': student.department,
             'academic_year': academic_year.name,
             'academic_year_id': academic_year.id,
         })
