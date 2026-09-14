@@ -304,6 +304,11 @@ class FeeStructure(models.Model):
 
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE)
     grade = models.IntegerField()  # Applicable grade
+    section = models.CharField(
+        max_length=10, blank=True, default='',
+        help_text="Leave blank to apply to every section of this grade (A, B, C…); "
+                   "set to override just one section, e.g. 'A'.",
+    )
     fee_type = models.CharField(max_length=20, choices=FeeType.choices)
     gender = models.CharField(max_length=10, choices=Gender.choices, blank=True, default='')
     department = models.CharField(max_length=10, choices=Department.choices, blank=True, default='')
@@ -314,10 +319,13 @@ class FeeStructure(models.Model):
     description = models.CharField(max_length=200, blank=True)
 
     class Meta:
-        unique_together = ['academic_year', 'grade', 'fee_type', 'gender', 'department', 'student_type']
+        unique_together = [
+            'academic_year', 'grade', 'section', 'fee_type', 'gender', 'department', 'student_type'
+        ]
 
     def __str__(self):
-        return f"Grade {self.grade} - {self.fee_type} - {self.student_type} ({self.academic_year})"
+        section_label = f" {self.section}" if self.section else ""
+        return f"Grade {self.grade}{section_label} - {self.fee_type} - {self.student_type} ({self.academic_year})"
 
 
 class FeePayment(models.Model):

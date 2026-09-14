@@ -1262,6 +1262,7 @@ def get_student_term_fee(request):
             return Response({'fee': None, 'reason': 'no_class'})
 
         grade = student.current_class.grade
+        section = student.current_class.section
 
         if academic_year_id:
             academic_year = AcademicYear.objects.filter(id=academic_year_id).first()
@@ -1280,7 +1281,11 @@ def get_student_term_fee(request):
             ).filter(
                 Q(gender=student.gender, department=student.department)
                 | Q(gender='', department='')
-            ).order_by('-gender', '-department').first()
+            ).filter(
+                # A section-specific rate (set on returning rows) wins over the
+                # grade-wide one that applies to every section.
+                Q(section=section) | Q(section='')
+            ).order_by('-section', '-gender', '-department').first()
 
         # A returning student without a returning-specific rate uses the new-student rate.
         fee_structure = find_fee(student.student_type)
@@ -1293,10 +1298,12 @@ def get_student_term_fee(request):
         return Response({
             'fee': float(fee_structure.amount),
             'grade': grade,
+            'section': section,
             'gender': student.gender,
             'department': student.department,
             'student_type': student.student_type,
             'rate_student_type': fee_structure.student_type,
+            'rate_section': fee_structure.section,
             'academic_year': academic_year.name,
             'academic_year_id': academic_year.id,
         })
