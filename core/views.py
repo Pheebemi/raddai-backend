@@ -8,7 +8,7 @@ from django.utils import timezone
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
     Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance,
-    AdmissionSetting, AdmissionFee, Application, ClassLevel
+    AdmissionSetting, AdmissionFee, Application, ClassLevel, StudentType
 )
 from .serializers import (
     UserSerializer, LoginSerializer, AcademicYearSerializer,
@@ -1210,6 +1210,7 @@ def promote_students(request):
             same_class = Class.objects.filter(academic_year=to_year, grade=current_grade).first()
             if same_class:
                 student.current_class = same_class
+                student.student_type = StudentType.RETURNING
                 student.save()
                 repeated += 1
             else:
@@ -1223,6 +1224,7 @@ def promote_students(request):
                 next_class = Class.objects.filter(academic_year=to_year, grade=next_grade).first()
                 if next_class:
                     student.current_class = next_class
+                    student.student_type = StudentType.RETURNING
                     student.save()
                     promoted += 1
                 else:
@@ -1269,14 +1271,21 @@ def get_student_term_fee(request):
         if not academic_year:
             return Response({'fee': None, 'reason': 'no_academic_year'})
 
-        fee_structure = FeeStructure.objects.filter(
-            academic_year=academic_year,
-            grade=grade,
-            fee_type=FeeStructure.FeeType.TUITION,
-        ).filter(
-            Q(gender=student.gender, department=student.department)
-            | Q(gender='', department='')
-        ).order_by('-gender', '-department').first()
+        def find_fee(student_type):
+            return FeeStructure.objects.filter(
+                academic_year=academic_year,
+                grade=grade,
+                fee_type=FeeStructure.FeeType.TUITION,
+                student_type=student_type,
+            ).filter(
+                Q(gender=student.gender, department=student.department)
+                | Q(gender='', department='')
+            ).order_by('-gender', '-department').first()
+
+        # A returning student without a returning-specific rate uses the new-student rate.
+        fee_structure = find_fee(student.student_type)
+        if not fee_structure and student.student_type == StudentType.RETURNING:
+            fee_structure = find_fee(StudentType.NEW)
 
         if not fee_structure:
             return Response({'fee': None, 'reason': 'no_fee_structure'})
@@ -1286,6 +1295,8 @@ def get_student_term_fee(request):
             'grade': grade,
             'gender': student.gender,
             'department': student.department,
+            'student_type': student.student_type,
+            'rate_student_type': fee_structure.student_type,
             'academic_year': academic_year.name,
             'academic_year_id': academic_year.id,
         })

@@ -37,6 +37,16 @@ class ClassLevel(models.IntegerChoices):
     SS_3 = 12, 'SS 3'
 
 
+class StudentType(models.TextChoices):
+    """
+    New intake vs continuing. Drives which FeeStructure row applies —
+    a returning student without a specific returning fee row falls back
+    to the new-student rate for the same grade/gender/department.
+    """
+    NEW = 'new', 'New'
+    RETURNING = 'returning', 'Returning'
+
+
 class User(AbstractUser):
     """Custom user model with role-based authentication"""
 
@@ -146,6 +156,9 @@ class Student(models.Model):
     current_class = models.ForeignKey(Class, on_delete=models.SET_NULL, null=True, related_name='students')
     gender = models.CharField(max_length=10, choices=Gender.choices, blank=True, default='')
     department = models.CharField(max_length=10, choices=Department.choices, blank=True, default='')
+    student_type = models.CharField(
+        max_length=10, choices=StudentType.choices, default=StudentType.NEW
+    )
     emergency_contact_name = models.CharField(max_length=100, blank=True)
     emergency_contact_phone = models.CharField(max_length=15, blank=True)
     medical_info = models.TextField(blank=True)
@@ -294,14 +307,17 @@ class FeeStructure(models.Model):
     fee_type = models.CharField(max_length=20, choices=FeeType.choices)
     gender = models.CharField(max_length=10, choices=Gender.choices, blank=True, default='')
     department = models.CharField(max_length=10, choices=Department.choices, blank=True, default='')
+    student_type = models.CharField(
+        max_length=10, choices=StudentType.choices, default=StudentType.NEW
+    )
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.CharField(max_length=200, blank=True)
 
     class Meta:
-        unique_together = ['academic_year', 'grade', 'fee_type', 'gender', 'department']
+        unique_together = ['academic_year', 'grade', 'fee_type', 'gender', 'department', 'student_type']
 
     def __str__(self):
-        return f"Grade {self.grade} - {self.fee_type} ({self.academic_year})"
+        return f"Grade {self.grade} - {self.fee_type} - {self.student_type} ({self.academic_year})"
 
 
 class FeePayment(models.Model):
