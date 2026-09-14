@@ -413,7 +413,7 @@ class ResultAdmin(admin.ModelAdmin):
 
 @admin.register(FeeStructure)
 class FeeStructureAdmin(admin.ModelAdmin):
-    list_display = ('academic_year', 'grade', 'fee_type', 'student_type', 'amount', 'description')
+    list_display = ('academic_year', 'grade', 'section', 'fee_type', 'student_type', 'amount', 'description')
     list_filter = ('academic_year', 'grade', 'fee_type', 'student_type')
     search_fields = ('description',)
 
