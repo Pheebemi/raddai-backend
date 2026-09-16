@@ -454,9 +454,12 @@ class FeePaymentAdmin(admin.ModelAdmin):
 
 @admin.register(StaffSalary)
 class StaffSalaryAdmin(admin.ModelAdmin):
-    list_display = ('staff', 'academic_year', 'month', 'amount', 'paid_date', 'voucher_number')
+    list_display = ('staff', 'academic_year', 'month', 'amount', 'paid_date', 'voucher_number', 'bank_name', 'account_number')
     list_filter = ('academic_year', 'month', 'paid_date', 'staff__designation')
-    search_fields = ('staff__user__first_name', 'staff__user__last_name', 'staff__staff_id', 'voucher_number')
+    search_fields = (
+        'staff__user__first_name', 'staff__user__last_name', 'staff__staff_id',
+        'voucher_number', 'account_name', 'account_number', 'bank_name',
+    )
     raw_id_fields = ('staff', 'academic_year')
 
 
