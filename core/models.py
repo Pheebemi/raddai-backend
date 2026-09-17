@@ -177,10 +177,20 @@ class Staff(models.Model):
         ADMINISTRATOR = 'administrator', 'Administrator'
         LIBRARIAN = 'librarian', 'Librarian'
         COUNSELOR = 'counselor', 'Counselor'
+        SECURITY = 'security', 'Security'
+        DIRECTOR_CLUBS_SOCIETY = 'director_clubs_society', 'Director Clubs & Society'
+        CASHIER = 'cashier', 'Cashier'
+        HEAD_TEACHER = 'head_teacher', 'Head Teacher'
+        SENIOR_MASTER = 'senior_master', 'Senior Master'
+        HEALTH_MISTRESS = 'health_mistress', 'Health Mistress'
+        EXAMS_MASTER = 'exams_master', 'Exams Master'
+        ICT_HOD = 'ict_hod', 'ICT HOD'
+        HOD_SCIENCE = 'hod_science', 'HOD Science'
+        BARRISTER = 'barrister', 'Barrister'
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_profile')
     staff_id = models.CharField(max_length=20, unique=True)
-    designation = models.CharField(max_length=20, choices=Designation.choices, default=Designation.TEACHER)
+    designation = models.CharField(max_length=30, choices=Designation.choices, default=Designation.TEACHER)
     joining_date = models.DateField(default=timezone.now)
     qualification = models.CharField(max_length=200, blank=True)
     experience_years = models.PositiveIntegerField(default=0)
