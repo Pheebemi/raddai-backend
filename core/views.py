@@ -210,7 +210,11 @@ class StudentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin' or user.role == 'management':
-            return Student.objects.all()
+            queryset = Student.objects.all()
+            class_id = self.request.query_params.get('class_id')
+            if class_id:
+                queryset = queryset.filter(current_class_id=class_id)
+            return queryset
         elif user.role == 'staff':
             try:
                 staff_profile = user.staff_profile
