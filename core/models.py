@@ -192,7 +192,7 @@ class Staff(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_profile')
     staff_id = models.CharField(max_length=20, unique=True)
     designation = models.CharField(max_length=30, choices=Designation.choices, default=Designation.TEACHER)
-    joining_date = models.DateField(default=timezone.now)
+    joining_date = models.DateField(default=get_today)
     qualification = models.CharField(max_length=200, blank=True)
     bank_name = models.CharField(max_length=100, blank=True)
     account_number = models.CharField(max_length=20, blank=True)

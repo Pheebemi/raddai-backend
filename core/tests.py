@@ -60,6 +60,64 @@ class StaffSalaryTests(APITestCase):
         self.assertEqual(staff_response.json()['account_number'], '0123456789')
 
 
+class StaffManagementTests(APITestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(
+            username='staff-manager', password='pw12345!', role='management'
+        )
+        self.client.force_authenticate(user=self.manager)
+
+    def test_create_staff_with_contact_and_qualification(self):
+        user_response = self.client.post(
+            '/api/users/',
+            {
+                'username': 'new-staff',
+                'password': 'TestPass123!',
+                'first_name': 'New',
+                'last_name': 'Staff',
+                'role': 'staff',
+                'phone_number': '08012345678',
+                'address': '12 Test Street',
+            },
+            format='json',
+        )
+        self.assertEqual(user_response.status_code, 201)
+
+        staff_response = self.client.post(
+            '/api/staff/',
+            {
+                'user': user_response.json()['id'],
+                'staff_id': 'ST-100',
+                'designation': 'nanny',
+                'qualification': 'NCE',
+            },
+            format='json',
+        )
+        self.assertEqual(staff_response.status_code, 201)
+        self.assertEqual(staff_response.json()['qualification'], 'NCE')
+
+    def test_update_staff_contact_and_qualification(self):
+        staff_user = User.objects.create_user(
+            username='existing-staff', password='pw12345!', first_name='Existing', role='staff'
+        )
+        staff = Staff.objects.create(user=staff_user, staff_id='ST-101')
+
+        user_response = self.client.patch(
+            f'/api/users/{staff_user.id}/',
+            {'phone_number': '08098765432', 'address': '45 Updated Avenue'},
+            format='json',
+        )
+        self.assertEqual(user_response.status_code, 200)
+
+        staff_response = self.client.patch(
+            f'/api/staff/{staff.id}/',
+            {'qualification': 'B.Ed'},
+            format='json',
+        )
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertEqual(staff_response.json()['qualification'], 'B.Ed')
+
+
 class AdmissionFlowTests(APITestCase):
     """
     Covers the applicant journey end to end. Applicants have no account, so
