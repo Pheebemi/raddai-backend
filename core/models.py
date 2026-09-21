@@ -183,6 +183,7 @@ class Staff(models.Model):
         HEAD_TEACHER = 'head_teacher', 'Head Teacher'
         SENIOR_MASTER = 'senior_master', 'Senior Master'
         HEALTH_MISTRESS = 'health_mistress', 'Health Mistress'
+        NANNY = 'nanny', 'Nanny'
         EXAMS_MASTER = 'exams_master', 'Exams Master'
         ICT_HOD = 'ict_hod', 'ICT HOD'
         HOD_SCIENCE = 'hod_science', 'HOD Science'
