@@ -1,6 +1,8 @@
 from datetime import date
+from io import StringIO
 
 from rest_framework.test import APITestCase
+from django.core.management import call_command
 
 from .models import (
     AcademicYear, AdmissionSetting, AdmissionFee, Application, Class, FeePayment,
@@ -225,6 +227,26 @@ class FeeResolutionTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['fee'], 100000.0)
         self.assertEqual(response.json()['rate_student_type'], 'new')
+
+    def test_repair_command_updates_existing_payment_total_and_status(self):
+        payment = FeePayment.objects.create(
+            student=self.student,
+            fee_structure=self.generic_new,
+            academic_year=self.year,
+            term='first',
+            amount_paid=150000,
+            total_amount=100000,
+            due_date=date(2027, 10, 31),
+            status=FeePayment.PaymentStatus.PAID,
+        )
+        output = StringIO()
+        call_command('repair_fee_payments', '--apply', stdout=output)
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.total_amount, 150000)
+        self.assertEqual(payment.fee_structure_id, self.section_override.id)
+        self.assertEqual(payment.status, FeePayment.PaymentStatus.PAID)
+        self.assertIn('Repaired 1 payment(s).', output.getvalue())
 
 
 class AdmissionFlowTests(APITestCase):
