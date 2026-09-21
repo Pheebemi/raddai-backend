@@ -193,6 +193,8 @@ class Staff(models.Model):
     designation = models.CharField(max_length=30, choices=Designation.choices, default=Designation.TEACHER)
     joining_date = models.DateField(default=timezone.now)
     qualification = models.CharField(max_length=200, blank=True)
+    bank_name = models.CharField(max_length=100, blank=True)
+    account_number = models.CharField(max_length=20, blank=True)
     experience_years = models.PositiveIntegerField(default=0)
 
     # Subjects taught by this staff member

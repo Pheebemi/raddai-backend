@@ -3,6 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.db import transaction
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from .models import (
@@ -560,6 +561,61 @@ class StaffSalaryViewSet(viewsets.ModelViewSet):
         if staff_id:
             qs = qs.filter(staff_id=staff_id)
         return qs
+
+    @action(detail=False, methods=['post'], url_path='carry-forward')
+    def carry_forward(self, request):
+        source_year_id = request.data.get('academic_year')
+        source_month = request.data.get('month')
+        target_year_id = request.data.get('target_academic_year') or source_year_id
+
+        if not source_year_id or not source_month:
+            return Response(
+                {'detail': 'academic_year and month are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            source_month = int(source_month)
+        except (TypeError, ValueError):
+            return Response({'detail': 'month must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if source_month not in range(1, 13):
+            return Response({'detail': 'month must be between 1 and 12.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        source_salaries = StaffSalary.objects.filter(
+            academic_year_id=source_year_id,
+            month=source_month,
+        )
+        if not source_salaries.exists():
+            return Response({'detail': 'No salary records found for the selected month.'}, status=status.HTTP_404_NOT_FOUND)
+
+        target_month = source_month % 12 + 1
+        created = 0
+        skipped = 0
+
+        with transaction.atomic():
+            for salary in source_salaries:
+                _, was_created = StaffSalary.objects.get_or_create(
+                    staff=salary.staff,
+                    academic_year_id=target_year_id,
+                    month=target_month,
+                    defaults={
+                        'amount': salary.amount,
+                        'paid_date': salary.paid_date,
+                        'voucher_number': salary.voucher_number,
+                    },
+                )
+                if was_created:
+                    created += 1
+                else:
+                    skipped += 1
+
+        return Response({
+            'created': created,
+            'skipped': skipped,
+            'month': target_month,
+            'academic_year': target_year_id,
+        }, status=status.HTTP_200_OK)
 
 
 class AnnouncementViewSet(viewsets.ModelViewSet):

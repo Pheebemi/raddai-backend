@@ -3,9 +3,55 @@ from datetime import date
 from rest_framework.test import APITestCase
 
 from .models import (
-    AcademicYear, AdmissionSetting, AdmissionFee, Application, User,
+    AcademicYear, AdmissionSetting, AdmissionFee, Application, Staff, StaffSalary, User,
 )
 from .views import _mark_application_paid
+
+
+class StaffSalaryTests(APITestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(
+            username='salary-manager', password='pw12345!', role='management'
+        )
+        self.staff_user = User.objects.create_user(
+            username='salary-staff', password='pw12345!', first_name='Ada', last_name='Staff', role='staff'
+        )
+        self.staff = Staff.objects.create(
+            user=self.staff_user,
+            staff_id='ST-001',
+            bank_name='Access Bank',
+            account_number='0123456789',
+        )
+        self.year = AcademicYear.objects.create(
+            name='2026-2027', start_date=date(2026, 9, 1), end_date=date(2027, 7, 31)
+        )
+        StaffSalary.objects.create(
+            staff=self.staff,
+            academic_year=self.year,
+            month=8,
+            amount=150000,
+            paid_date=date(2026, 8, 25),
+            voucher_number='AUG-001',
+        )
+        self.client.force_authenticate(user=self.manager)
+
+    def test_carry_forward_copies_salary_and_exposes_bank_details(self):
+        response = self.client.post(
+            '/api/staff-salaries/carry-forward/',
+            {'academic_year': self.year.id, 'month': 8},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['created'], 1)
+        copied = StaffSalary.objects.get(staff=self.staff, academic_year=self.year, month=9)
+        self.assertEqual(copied.amount, 150000)
+        self.assertEqual(copied.voucher_number, 'AUG-001')
+
+        staff_response = self.client.get(f'/api/staff/{self.staff.id}/')
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertEqual(staff_response.json()['bank_name'], 'Access Bank')
+        self.assertEqual(staff_response.json()['account_number'], '0123456789')
 
 
 class AdmissionFlowTests(APITestCase):
