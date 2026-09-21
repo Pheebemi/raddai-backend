@@ -3,7 +3,8 @@ from datetime import date
 from rest_framework.test import APITestCase
 
 from .models import (
-    AcademicYear, AdmissionSetting, AdmissionFee, Application, Staff, StaffSalary, User,
+    AcademicYear, AdmissionSetting, AdmissionFee, Application, Class, FeePayment,
+    FeeStructure, Staff, StaffSalary, Student, User,
 )
 from .views import _mark_application_paid
 
@@ -116,6 +117,114 @@ class StaffManagementTests(APITestCase):
         )
         self.assertEqual(staff_response.status_code, 200)
         self.assertEqual(staff_response.json()['qualification'], 'B.Ed')
+
+
+class FeeResolutionTests(APITestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(
+            username='fee-manager', password='pw12345!', role='management'
+        )
+        self.year = AcademicYear.objects.create(
+            name='2027-2028', start_date=date(2027, 9, 1), end_date=date(2028, 7, 31), is_active=True
+        )
+        self.class_a = Class.objects.create(name='JSS 1 A', grade=7, section='A', academic_year=self.year)
+        self.class_b = Class.objects.create(name='JSS 1 B', grade=7, section='B', academic_year=self.year)
+        self.student_user = User.objects.create_user(
+            username='returning-student', password='pw12345!', first_name='Returning', last_name='Student', role='student'
+        )
+        self.student = Student.objects.create(
+            user=self.student_user,
+            student_id='STD-001',
+            current_class=self.class_a,
+            gender='female',
+            department='science',
+            student_type='returning',
+        )
+        self.generic_new = FeeStructure.objects.create(
+            academic_year=self.year, grade=7, fee_type='tuition', student_type='new', amount=100000
+        )
+        self.generic_returning = FeeStructure.objects.create(
+            academic_year=self.year, grade=7, fee_type='tuition', student_type='returning', amount=120000
+        )
+        self.section_override = FeeStructure.objects.create(
+            academic_year=self.year, grade=7, section='A', fee_type='tuition',
+            gender='female', department='science', student_type='returning', amount=150000
+        )
+        self.client.force_authenticate(user=self.manager)
+
+    def test_fee_display_uses_specific_returning_section_rate(self):
+        response = self.client.get(
+            '/api/fees/student-term-fee/',
+            {'student_id': self.student.id, 'academic_year': self.year.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['fee'], 150000.0)
+        self.assertEqual(response.json()['rate_section'], 'A')
+
+    def test_payment_creation_uses_same_specific_rate(self):
+        response = self.client.post(
+            '/api/fee-payments/',
+            {
+                'student': self.student.id,
+                'fee_structure': self.generic_new.id,
+                'academic_year': self.year.id,
+                'term': 'first',
+                'amount_paid': 150000,
+                'total_amount': 100000,
+                'due_date': '2027-10-31',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payment = FeePayment.objects.get(student=self.student, term='first')
+        self.assertEqual(payment.total_amount, 150000)
+        self.assertEqual(payment.fee_structure_id, self.section_override.id)
+
+    def test_returning_without_override_uses_returning_grade_rate(self):
+        user = User.objects.create_user(
+            username='returning-b-student', password='pw12345!', role='student'
+        )
+        student = Student.objects.create(
+            user=user,
+            student_id='STD-002',
+            current_class=self.class_b,
+            gender='male',
+            department='arts',
+            student_type='returning',
+        )
+
+        response = self.client.get(
+            '/api/fees/student-term-fee/',
+            {'student_id': student.id, 'academic_year': self.year.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['fee'], 120000.0)
+        self.assertEqual(response.json()['rate_section'], '')
+
+    def test_new_student_uses_new_intake_rate(self):
+        user = User.objects.create_user(
+            username='new-student', password='pw12345!', role='student'
+        )
+        student = Student.objects.create(
+            user=user,
+            student_id='STD-003',
+            current_class=self.class_a,
+            gender='female',
+            department='science',
+            student_type='new',
+        )
+
+        response = self.client.get(
+            '/api/fees/student-term-fee/',
+            {'student_id': student.id, 'academic_year': self.year.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['fee'], 100000.0)
+        self.assertEqual(response.json()['rate_student_type'], 'new')
 
 
 class AdmissionFlowTests(APITestCase):

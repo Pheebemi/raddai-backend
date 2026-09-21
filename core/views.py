@@ -426,6 +426,33 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
 
+def _resolve_tuition_fee(student, academic_year):
+    """Resolve the most specific tuition rate for a student's current class."""
+    if not student or not student.current_class or not academic_year:
+        return None
+
+    grade = student.current_class.grade
+    section = student.current_class.section
+
+    def find_fee(student_type):
+        return FeeStructure.objects.filter(
+            academic_year=academic_year,
+            grade=grade,
+            fee_type=FeeStructure.FeeType.TUITION,
+            student_type=student_type,
+        ).filter(
+            Q(gender=student.gender, department=student.department)
+            | Q(gender='', department='')
+        ).filter(
+            Q(section=section) | Q(section='')
+        ).order_by('-section', '-gender', '-department').first()
+
+    fee_structure = find_fee(student.student_type)
+    if not fee_structure and student.student_type == StudentType.RETURNING:
+        fee_structure = find_fee(StudentType.NEW)
+    return fee_structure
+
+
 class FeePaymentViewSet(viewsets.ModelViewSet):
     queryset = FeePayment.objects.all()
     serializer_class = FeePaymentSerializer
@@ -460,25 +487,8 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         fee_structure = data.get('fee_structure')
         incoming_amount = data.get('amount_paid') or 0
 
-        full_amount = None
-        resolved_fee_structure = fee_structure
-
-        try:
-            if student and hasattr(student, 'current_class') and student.current_class and academic_year:
-                grade = student.current_class.grade
-                fs_qs = FeeStructure.objects.filter(
-                    academic_year=academic_year,
-                    grade=grade,
-                    fee_type=FeeStructure.FeeType.TUITION,
-                ).filter(
-                    Q(gender=student.gender, department=student.department)
-                    | Q(gender='', department='')
-                ).order_by('-gender', '-department')
-                resolved_fee_structure = fs_qs.first() or fee_structure
-                if resolved_fee_structure and getattr(resolved_fee_structure, 'amount', None) is not None:
-                    full_amount = resolved_fee_structure.amount
-        except Exception:
-            pass
+        resolved_fee_structure = _resolve_tuition_fee(student, academic_year) or fee_structure
+        full_amount = resolved_fee_structure.amount if resolved_fee_structure else None
 
         if full_amount is None:
             if resolved_fee_structure and hasattr(resolved_fee_structure, 'amount') and resolved_fee_structure.amount is not None:
@@ -842,13 +852,7 @@ def flutterwave_webhook(request):
         return Response({'error': 'No active academic year'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Find fee structure
-    fee_structure = None
-    if student.current_class:
-        fee_structure = FeeStructure.objects.filter(
-            grade=student.current_class.grade,
-            fee_type='tuition',
-            academic_year=academic_year,
-        ).first()
+        fee_structure = _resolve_tuition_fee(student, academic_year)
 
     total_amount = float(fee_structure.amount) if fee_structure else verified_amount
 
@@ -966,14 +970,8 @@ def verify_flutterwave_payment(request):
     except AcademicYear.DoesNotExist:
         return Response({'error': 'Academic year not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Find fee structure
-    fee_structure = None
-    if student.current_class:
-        fee_structure = FeeStructure.objects.filter(
-            grade=student.current_class.grade,
-            fee_type='tuition',
-            academic_year=academic_year_obj,
-        ).first()
+    # Resolve the same specific rate shown to the student before recording payment.
+    fee_structure = _resolve_tuition_fee(student, academic_year_obj)
 
     total_amount = float(fee_structure.amount) if fee_structure else verified_amount
 
@@ -1335,25 +1333,7 @@ def get_student_term_fee(request):
         if not academic_year:
             return Response({'fee': None, 'reason': 'no_academic_year'})
 
-        def find_fee(student_type):
-            return FeeStructure.objects.filter(
-                academic_year=academic_year,
-                grade=grade,
-                fee_type=FeeStructure.FeeType.TUITION,
-                student_type=student_type,
-            ).filter(
-                Q(gender=student.gender, department=student.department)
-                | Q(gender='', department='')
-            ).filter(
-                # A section-specific rate (set on returning rows) wins over the
-                # grade-wide one that applies to every section.
-                Q(section=section) | Q(section='')
-            ).order_by('-section', '-gender', '-department').first()
-
-        # A returning student without a returning-specific rate uses the new-student rate.
-        fee_structure = find_fee(student.student_type)
-        if not fee_structure and student.student_type == StudentType.RETURNING:
-            fee_structure = find_fee(StudentType.NEW)
+        fee_structure = _resolve_tuition_fee(student, academic_year)
 
         if not fee_structure:
             return Response({'fee': None, 'reason': 'no_fee_structure'})
@@ -1409,26 +1389,27 @@ def dashboard_stats(request):
 
         total_expected = 0.0
         if calc_year:
-            fee_map = {
-                fs.grade: float(fs.amount)
-                for fs in FeeStructure.objects.filter(
-                    academic_year=calc_year,
-                    fee_type=FeeStructure.FeeType.TUITION,
-                )
-            }
-
             if calc_year == active_year:
-                # Active year: use current_class (accurate for current enrolment)
-                students_by_grade = (
-                    Student.objects
-                    .filter(current_class__academic_year=calc_year, current_class__isnull=False)
-                    .values('current_class__grade')
-                    .annotate(count=DbCount('id'))
-                )
-                for row in students_by_grade:
-                    grade = row['current_class__grade']
-                    fee = fee_map.get(grade, 0)
-                    total_expected += fee * 3 * row['count']
+                # Active year: resolve each student's actual rate, including
+                # student type, gender, department, and section overrides.
+                fee_cache = {}
+                active_students = Student.objects.filter(
+                    current_class__academic_year=calc_year,
+                    current_class__isnull=False,
+                ).select_related('current_class')
+                for student in active_students:
+                    cache_key = (
+                        student.current_class.grade,
+                        student.current_class.section,
+                        student.student_type,
+                        student.gender,
+                        student.department,
+                    )
+                    if cache_key not in fee_cache:
+                        fee_cache[cache_key] = _resolve_tuition_fee(student, calc_year)
+                    fee_structure = fee_cache[cache_key]
+                    if fee_structure:
+                        total_expected += float(fee_structure.amount) * 3
             else:
                 # Old year: use recorded_class from results (historical enrolment)
                 from django.db.models import Count as RCount
@@ -1446,7 +1427,15 @@ def dashboard_stats(request):
                         grade_counts[grade] = set()
                     grade_counts[grade].add(row['student'])
                 for grade, students_set in grade_counts.items():
-                    fee = fee_map.get(grade, 0)
+                    fee = FeeStructure.objects.filter(
+                        academic_year=calc_year,
+                        grade=grade,
+                        fee_type=FeeStructure.FeeType.TUITION,
+                        student_type=StudentType.NEW,
+                        gender='',
+                        department='',
+                        section='',
+                    ).values_list('amount', flat=True).first() or 0
                     total_expected += fee * 3 * len(students_set)
 
         paid_in_year = float(
@@ -1559,13 +1548,8 @@ def dashboard_stats(request):
             session_pending_fees = 0
 
             if academic_year and student_profile.current_class:
-                grade = student_profile.current_class.grade
-                tuition_qs = FeeStructure.objects.filter(
-                    academic_year=academic_year,
-                    grade=grade,
-                    fee_type=FeeStructure.FeeType.TUITION,
-                )
-                per_term_fee = tuition_qs.aggregate(total=Sum('amount'))['total'] or 0
+                fee_structure = _resolve_tuition_fee(student_profile, academic_year)
+                per_term_fee = fee_structure.amount if fee_structure else 0
                 session_total_fee = per_term_fee * 3
 
                 paid_agg = FeePayment.objects.filter(
