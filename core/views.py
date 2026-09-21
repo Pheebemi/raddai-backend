@@ -603,6 +603,9 @@ class StaffSalaryViewSet(viewsets.ModelViewSet):
                         'amount': salary.amount,
                         'paid_date': salary.paid_date,
                         'voucher_number': salary.voucher_number,
+                        'account_name': salary.account_name,
+                        'account_number': salary.account_number,
+                        'bank_name': salary.bank_name,
                     },
                 )
                 if was_created:

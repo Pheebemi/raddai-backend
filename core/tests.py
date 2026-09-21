@@ -32,6 +32,9 @@ class StaffSalaryTests(APITestCase):
             amount=150000,
             paid_date=date(2026, 8, 25),
             voucher_number='AUG-001',
+            account_name='Ada Staff',
+            account_number='0123456789',
+            bank_name='Access Bank',
         )
         self.client.force_authenticate(user=self.manager)
 
@@ -47,6 +50,9 @@ class StaffSalaryTests(APITestCase):
         copied = StaffSalary.objects.get(staff=self.staff, academic_year=self.year, month=9)
         self.assertEqual(copied.amount, 150000)
         self.assertEqual(copied.voucher_number, 'AUG-001')
+        self.assertEqual(copied.account_name, 'Ada Staff')
+        self.assertEqual(copied.account_number, '0123456789')
+        self.assertEqual(copied.bank_name, 'Access Bank')
 
         staff_response = self.client.get(f'/api/staff/{self.staff.id}/')
         self.assertEqual(staff_response.status_code, 200)
