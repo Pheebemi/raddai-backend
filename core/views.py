@@ -458,6 +458,15 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
     serializer_class = FeePaymentSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 
+    def get_permissions(self):
+        # Writing a fee payment is a financial record change — restrict it to
+        # management/admin so a student or parent can't POST/PATCH their own
+        # "paid" status directly (has_object_permission only guards existing
+        # objects, not create, so this needs its own check).
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
+
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin' or user.role == 'management':
@@ -1018,6 +1027,100 @@ def verify_flutterwave_payment(request):
     )
 
     from .serializers import FeePaymentSerializer
+    return Response(FeePaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([IsManagementOrAdmin])
+def record_manual_payment(request):
+    """
+    Management/admin recording an offline payment (cash, bank transfer, POS, etc.).
+    Reuses the same resolve/accumulate/status logic as the Flutterwave path so the
+    resulting FeePayment is indistinguishable to the student/parent portals — only
+    payment_method differs from 'flutterwave'.
+    """
+    import uuid
+    import calendar
+    from datetime import date
+
+    student_id = request.data.get('student_id')
+    academic_year_id = request.data.get('academic_year')
+    term = request.data.get('term')
+    amount = request.data.get('amount')
+    payment_method = (request.data.get('payment_method') or '').strip()
+    reference = (request.data.get('reference') or '').strip()
+    remarks = request.data.get('remarks', '')
+
+    if not student_id:
+        return Response({'error': 'student_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if not payment_method:
+        return Response({'error': 'payment_method is required'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return Response({'error': 'A valid amount is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if amount <= 0:
+        return Response({'error': 'Amount must be greater than zero'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        student = Student.objects.get(id=student_id)
+    except Student.DoesNotExist:
+        return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if academic_year_id:
+        try:
+            academic_year = AcademicYear.objects.get(id=academic_year_id)
+        except AcademicYear.DoesNotExist:
+            return Response({'error': 'Academic year not found'}, status=status.HTTP_404_NOT_FOUND)
+    else:
+        academic_year = AcademicYear.objects.filter(is_active=True).first()
+        if not academic_year:
+            return Response({'error': 'No active academic year'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not term:
+        for t in ['first', 'second', 'third']:
+            if not FeePayment.objects.filter(student=student, academic_year=academic_year, term=t, status='paid').exists():
+                term = t
+                break
+        term = term or 'first'
+
+    fee_structure = _resolve_tuition_fee(student, academic_year)
+    total_amount = float(fee_structure.amount) if fee_structure else amount
+
+    today = date.today()
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    due_date = date(today.year, today.month, last_day)
+
+    transaction_id = reference or f"MANUAL-{uuid.uuid4().hex[:10].upper()}"
+
+    from .serializers import FeePaymentSerializer
+
+    existing = FeePayment.objects.filter(student=student, academic_year=academic_year, term=term).first()
+    if existing:
+        new_amount_paid = min(float(existing.amount_paid or 0) + amount, total_amount)
+        existing.amount_paid = new_amount_paid
+        existing.total_amount = total_amount
+        existing.status = FeePayment.PaymentStatus.PAID if new_amount_paid >= total_amount else FeePayment.PaymentStatus.PARTIAL
+        existing.transaction_id = transaction_id
+        existing.payment_method = payment_method
+        existing.remarks = remarks or existing.remarks
+        existing.save()
+        return Response(FeePaymentSerializer(existing).data, status=status.HTTP_200_OK)
+
+    payment_status = FeePayment.PaymentStatus.PAID if amount >= total_amount else FeePayment.PaymentStatus.PARTIAL
+    payment = FeePayment.objects.create(
+        student=student,
+        fee_structure=fee_structure,
+        academic_year=academic_year,
+        term=term,
+        amount_paid=amount,
+        total_amount=total_amount,
+        status=payment_status,
+        payment_method=payment_method,
+        transaction_id=transaction_id,
+        remarks=remarks,
+        due_date=due_date,
+    )
     return Response(FeePaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
 
