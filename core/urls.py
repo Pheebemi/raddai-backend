@@ -48,6 +48,9 @@ urlpatterns = [
     # Flutterwave webhook — called by Flutterwave server when payment completes
     path('payments/webhook/', views.flutterwave_webhook, name='flutterwave_webhook'),
 
+    # Management/admin recording an offline (cash, bank transfer, etc.) payment
+    path('payments/record-manual/', views.record_manual_payment, name='record_manual_payment'),
+
     # Get per-term fee for current student
     path('fees/student-term-fee/', views.get_student_term_fee, name='student_term_fee'),
 
