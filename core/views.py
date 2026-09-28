@@ -481,7 +481,11 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin' or user.role == 'management':
-            return FeePayment.objects.all()
+            queryset = FeePayment.objects.all()
+            student_id = self.request.query_params.get('student')
+            if student_id:
+                queryset = queryset.filter(student_id=student_id)
+            return queryset
         elif user.role == 'student':
             try:
                 student_profile = user.student_profile
