@@ -214,6 +214,13 @@ class StudentViewSet(viewsets.ModelViewSet):
             class_id = self.request.query_params.get('class_id')
             if class_id:
                 queryset = queryset.filter(current_class_id=class_id)
+            search = self.request.query_params.get('search')
+            if search:
+                queryset = queryset.filter(
+                    Q(user__first_name__icontains=search) |
+                    Q(user__last_name__icontains=search) |
+                    Q(student_id__icontains=search)
+                )
             return queryset
         elif user.role == 'staff':
             try:
@@ -1085,7 +1092,12 @@ def record_manual_payment(request):
         term = term or 'first'
 
     fee_structure = _resolve_tuition_fee(student, academic_year)
-    total_amount = float(fee_structure.amount) if fee_structure else amount
+    if not fee_structure:
+        return Response({
+            'error': 'No fee structure is set up for this student\'s class/type yet. '
+                     'Add one under Fee Structures before recording a payment.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    total_amount = float(fee_structure.amount)
 
     today = date.today()
     last_day = calendar.monthrange(today.year, today.month)[1]
