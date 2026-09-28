@@ -216,11 +216,15 @@ class StudentViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(current_class_id=class_id)
             search = self.request.query_params.get('search')
             if search:
-                queryset = queryset.filter(
-                    Q(user__first_name__icontains=search) |
-                    Q(user__last_name__icontains=search) |
-                    Q(student_id__icontains=search)
-                )
+                # Match each whitespace-separated word against first/last name/ID
+                # (AND across words) so a full "First Last" query works, not just
+                # a single field's substring.
+                for term in search.split():
+                    queryset = queryset.filter(
+                        Q(user__first_name__icontains=term) |
+                        Q(user__last_name__icontains=term) |
+                        Q(student_id__icontains=term)
+                    )
             return queryset
         elif user.role == 'staff':
             try:
@@ -1108,6 +1112,13 @@ def record_manual_payment(request):
     from .serializers import FeePaymentSerializer
 
     existing = FeePayment.objects.filter(student=student, academic_year=academic_year, term=term).first()
+    if existing and existing.status == FeePayment.PaymentStatus.PAID:
+        return Response({
+            'error': f"{term.capitalize()} Term is already fully paid "
+                     f"(₦{existing.amount_paid:,.2f} of ₦{existing.total_amount:,.2f}). "
+                     f"Choose a different term."
+        }, status=status.HTTP_400_BAD_REQUEST)
+
     if existing:
         new_amount_paid = min(float(existing.amount_paid or 0) + amount, total_amount)
         existing.amount_paid = new_amount_paid
