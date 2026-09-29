@@ -54,6 +54,10 @@ urlpatterns = [
     # Get per-term fee for current student
     path('fees/student-term-fee/', views.get_student_term_fee, name='student_term_fee'),
 
+    # Exam portal integration — shared-secret authenticated, server-to-server only
+    path('exam-portal/roster/', views.exam_portal_roster, name='exam_portal_roster'),
+    path('exam-portal/results/', views.record_exam_result, name='exam_portal_result'),
+
     # Admissions — public, no authentication. Applicants never get an account.
     path('admissions/info/', views.admission_info, name='admission_info'),
     path('admissions/start/', views.start_application, name='start_application'),
