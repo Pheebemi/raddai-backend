@@ -2,6 +2,7 @@ from datetime import date
 from io import StringIO
 
 from rest_framework.test import APITestCase
+from django.test import override_settings
 from django.core.management import call_command
 
 from .models import (
@@ -807,3 +808,25 @@ class AdmissionManagementTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertTrue(self.setting.fees.exists(), 'existing fees should survive a bad request')
+
+
+@override_settings(EXAM_PORTAL_API_KEY='test-exam-key')
+class ExamPortalRosterTests(APITestCase):
+    url = '/api/exam-portal/roster/'
+
+    def test_requires_key(self):
+        self.assertEqual(self.client.get(self.url).status_code, 401)
+
+    def test_lists_management_and_admin_accounts_only(self):
+        User.objects.create_user(username='bursar', password='pw12345!', role='management', first_name='Ada', last_name='Obi')
+        User.objects.create_user(username='head', password='pw12345!', role='admin')
+        User.objects.create_user(username='teacher', password='pw12345!', role='staff')
+
+        response = self.client.get(self.url, HTTP_X_EXAM_PORTAL_KEY='test-exam-key')
+
+        self.assertEqual(response.status_code, 200)
+        managers = {m['username']: m for m in response.data['managers']}
+        self.assertEqual(set(managers), {'bursar', 'head'})
+        self.assertEqual(managers['bursar']['full_name'], 'Ada Obi')
+        self.assertEqual(managers['head']['full_name'], 'head')
+        self.assertEqual(managers['bursar']['role'], 'management')

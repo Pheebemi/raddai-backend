@@ -1166,8 +1166,9 @@ def _check_exam_portal_key(request):
 def exam_portal_roster(request):
     """
     Bundled read for the exam portal's roster sync: academic years, classes,
-    subjects, students, and staff in one payload. Not paginated — this is a
-    trusted internal integration pulling school-scale data, not a public API.
+    subjects, students, staff, and management/admin accounts in one payload.
+    Not paginated — this is a trusted internal integration pulling
+    school-scale data, not a public API.
     """
     if not _check_exam_portal_key(request):
         return Response({'error': 'Invalid or missing API key'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -1182,6 +1183,7 @@ def exam_portal_roster(request):
     subjects = Subject.objects.all()
     students = Student.objects.select_related('user', 'current_class')
     staff = Staff.objects.select_related('user')
+    managers = User.objects.filter(role__in=[User.Role.ADMIN, User.Role.MANAGEMENT])
     if academic_year_id:
         classes = classes.filter(academic_year_id=academic_year_id)
         students = students.filter(current_class__academic_year_id=academic_year_id)
@@ -1234,6 +1236,16 @@ def exam_portal_roster(request):
                 'is_active': st.user.is_active,
             }
             for st in staff
+        ],
+        'managers': [
+            {
+                'id': u.id,
+                'username': u.username,
+                'full_name': full_name(u),
+                'role': u.role,
+                'is_active': u.is_active,
+            }
+            for u in managers
         ],
     })
 
