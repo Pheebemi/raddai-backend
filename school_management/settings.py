@@ -37,6 +37,10 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'laazeereacademy.pw,www.laazeere
 FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY', '')
 FLUTTERWAVE_WEBHOOK_HASH = os.environ.get('FLUTTERWAVE_WEBHOOK_HASH', '')
 
+# Exam portal (laazeere-exams) integration — shared secret for its
+# server-to-server roster sync / result push endpoints
+EXAM_PORTAL_API_KEY = os.environ.get('EXAM_PORTAL_API_KEY', '')
+
 
 # Application definition
 

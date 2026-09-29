@@ -1151,6 +1151,163 @@ def record_manual_payment(request):
     return Response(FeePaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
 
+def _check_exam_portal_key(request):
+    """Shared-secret check for the exam portal integration — same pattern as
+    the Flutterwave webhooks (AllowAny + compare a header against a settings
+    value), since there's no service-account/API-key auth mechanism in this
+    codebase otherwise."""
+    from django.conf import settings as django_settings
+    expected = getattr(django_settings, 'EXAM_PORTAL_API_KEY', '')
+    return bool(expected) and request.headers.get('X-Exam-Portal-Key', '') == expected
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def exam_portal_roster(request):
+    """
+    Bundled read for the exam portal's roster sync: academic years, classes,
+    subjects, students, and staff in one payload. Not paginated — this is a
+    trusted internal integration pulling school-scale data, not a public API.
+    """
+    if not _check_exam_portal_key(request):
+        return Response({'error': 'Invalid or missing API key'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    academic_year_id = request.query_params.get('academic_year')
+
+    years = AcademicYear.objects.all()
+    if academic_year_id:
+        years = years.filter(id=academic_year_id)
+
+    classes = Class.objects.all()
+    subjects = Subject.objects.all()
+    students = Student.objects.select_related('user', 'current_class')
+    staff = Staff.objects.select_related('user')
+    if academic_year_id:
+        classes = classes.filter(academic_year_id=academic_year_id)
+        students = students.filter(current_class__academic_year_id=academic_year_id)
+
+    def full_name(user):
+        name = user.get_full_name().strip()
+        return name if name else user.username
+
+    return Response({
+        'academic_years': [
+            {
+                'id': y.id,
+                'name': y.name,
+                'start_date': y.start_date,
+                'end_date': y.end_date,
+                'is_active': y.is_active,
+            }
+            for y in years
+        ],
+        'classes': [
+            {
+                'id': c.id,
+                'name': c.name,
+                'grade': c.grade,
+                'section': c.section,
+                'academic_year_id': c.academic_year_id,
+            }
+            for c in classes
+        ],
+        'subjects': [
+            {'id': s.id, 'name': s.name, 'code': s.code}
+            for s in subjects
+        ],
+        'students': [
+            {
+                'id': s.id,
+                'student_id': s.student_id,
+                'full_name': full_name(s.user),
+                'current_class_id': s.current_class_id,
+                'is_active': s.user.is_active,
+            }
+            for s in students
+        ],
+        'staff': [
+            {
+                'id': st.id,
+                'staff_id': st.staff_id,
+                'full_name': full_name(st.user),
+                'designation': st.designation,
+                'is_active': st.user.is_active,
+            }
+            for st in staff
+        ],
+    })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def record_exam_result(request):
+    """
+    Exam portal pushing a graded test's score into raddai. Writes only the
+    one Result slot the caller names (score_field) — never the other three —
+    so a teacher's already-entered CA/exam scores on the same row survive
+    untouched. Always goes through .save(), never a raw .update(), so
+    Result.save()'s marks_obtained/grade recompute correctly.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    if not _check_exam_portal_key(request):
+        return Response({'error': 'Invalid or missing API key'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    student_id = request.data.get('student_id')
+    subject_id = request.data.get('subject_id')
+    academic_year_id = request.data.get('academic_year_id')
+    term = request.data.get('term')
+    score_field = request.data.get('score_field')
+    score = request.data.get('score')
+
+    if not all([student_id, subject_id, academic_year_id, term, score_field]) or score is None:
+        return Response(
+            {'error': 'student_id, subject_id, academic_year_id, term, score_field, and score are all required'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    allowed_fields = {'ca1_score': 10, 'ca2_score': 10, 'ca3_score': 10, 'exam_score': 70}
+    if score_field not in allowed_fields:
+        return Response({'error': f'score_field must be one of {list(allowed_fields)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if term not in Result.Term.values:
+        return Response({'error': f'term must be one of {list(Result.Term.values)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        score = Decimal(str(score))
+    except InvalidOperation:
+        return Response({'error': 'score must be a valid number'}, status=status.HTTP_400_BAD_REQUEST)
+
+    max_score = allowed_fields[score_field]
+    if score < 0 or score > max_score:
+        return Response({'error': f'score for {score_field} must be between 0 and {max_score}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        student = Student.objects.get(id=student_id)
+    except Student.DoesNotExist:
+        return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        subject = Subject.objects.get(id=subject_id)
+    except Subject.DoesNotExist:
+        return Response({'error': 'Subject not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        academic_year = AcademicYear.objects.get(id=academic_year_id)
+    except AcademicYear.DoesNotExist:
+        return Response({'error': 'Academic year not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    result, created = Result.objects.get_or_create(
+        student=student, subject=subject, academic_year=academic_year, term=term,
+        defaults={score_field: score, 'recorded_class': student.current_class},
+    )
+    if not created:
+        setattr(result, score_field, score)
+        result.save()
+
+    return Response(ResultSerializer(result).data, status=status.HTTP_200_OK)
+
+
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def login_view(request):
