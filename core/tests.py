@@ -830,3 +830,57 @@ class ExamPortalRosterTests(APITestCase):
         self.assertEqual(managers['bursar']['full_name'], 'Ada Obi')
         self.assertEqual(managers['head']['full_name'], 'head')
         self.assertEqual(managers['bursar']['role'], 'management')
+
+
+class RoleEscalationTests(APITestCase):
+    """Nobody but management/admin may create accounts or set a role."""
+
+    def setUp(self):
+        self.student = User.objects.create_user(username='stu', password='pw12345!', role='student')
+        self.manager = User.objects.create_user(username='boss', password='pw12345!', role='management')
+
+    def test_student_cannot_make_themselves_management(self):
+        self.client.force_authenticate(self.student)
+        response = self.client.patch('/api/users/update_profile/', {'role': 'management'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.role, 'student')
+
+    def test_student_can_still_edit_their_own_profile(self):
+        self.client.force_authenticate(self.student)
+        response = self.client.patch(
+            '/api/users/update_profile/', {'first_name': 'Ada', 'role': 'student'}, format='json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.first_name, 'Ada')
+
+    def test_student_cannot_create_accounts(self):
+        self.client.force_authenticate(self.student)
+        response = self.client.post(
+            '/api/users/', {'username': 'sneaky', 'password': 'pw12345!', 'role': 'management'}, format='json'
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(User.objects.filter(username='sneaky').exists())
+
+    def test_management_can_create_accounts_and_set_roles(self):
+        self.client.force_authenticate(self.manager)
+        response = self.client.post(
+            '/api/users/', {'username': 'newstaff', 'password': 'pw12345!', 'role': 'staff'}, format='json'
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(User.objects.get(username='newstaff').role, 'staff')
+
+
+@override_settings(EXAM_PORTAL_API_KEY='test-exam-key')
+class ExamPortalRosterAccessTests(APITestCase):
+    url = '/api/exam-portal/roster/'
+
+    def test_wrong_key_is_rejected(self):
+        self.assertEqual(self.client.get(self.url, HTTP_X_EXAM_PORTAL_KEY='wrong').status_code, 401)
+
+    def test_deactivated_managers_are_left_out(self):
+        User.objects.create_user(username='left', password='pw12345!', role='management', is_active=False)
+        User.objects.create_user(username='here', password='pw12345!', role='management')
+        response = self.client.get(self.url, HTTP_X_EXAM_PORTAL_KEY='test-exam-key')
+        self.assertEqual([m['username'] for m in response.data['managers']], ['here'])

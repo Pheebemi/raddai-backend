@@ -79,7 +79,8 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == 'create':
-            return [permissions.IsAuthenticated()]
+            # Only management/admin create accounts (students, staff, parents).
+            return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
     def get_queryset(self):
@@ -1156,9 +1157,11 @@ def _check_exam_portal_key(request):
     the Flutterwave webhooks (AllowAny + compare a header against a settings
     value), since there's no service-account/API-key auth mechanism in this
     codebase otherwise."""
+    import hmac
     from django.conf import settings as django_settings
     expected = getattr(django_settings, 'EXAM_PORTAL_API_KEY', '')
-    return bool(expected) and request.headers.get('X-Exam-Portal-Key', '') == expected
+    # Constant-time compare, so the key can't be guessed byte by byte from response timing.
+    return bool(expected) and hmac.compare_digest(request.headers.get('X-Exam-Portal-Key', ''), expected)
 
 
 @api_view(['GET'])
@@ -1183,7 +1186,11 @@ def exam_portal_roster(request):
     subjects = Subject.objects.all()
     students = Student.objects.select_related('user', 'current_class')
     staff = Staff.objects.select_related('user')
-    managers = User.objects.filter(role__in=[User.Role.ADMIN, User.Role.MANAGEMENT])
+    # Active accounts only: anyone deactivated here drops off the list, and the
+    # exam portal then disables their management access on its next sync.
+    managers = User.objects.filter(
+        role__in=[User.Role.ADMIN, User.Role.MANAGEMENT], is_active=True
+    ).order_by('id')
     if academic_year_id:
         classes = classes.filter(academic_year_id=academic_year_id)
         students = students.filter(current_class__academic_year_id=academic_year_id)

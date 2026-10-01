@@ -29,6 +29,17 @@ class UserSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         return obj.get_full_name()
 
+    def validate_role(self, value):
+        """Only management/admin may set or change a role. Without this, anyone
+        logged in could PATCH their own profile to role='management'."""
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        privileged = bool(user and user.is_authenticated and user.role in ('admin', 'management'))
+        current = self.instance.role if self.instance is not None else None
+        if not privileged and value != current:
+            raise serializers.ValidationError('You are not allowed to change roles.')
+        return value
+
     def get_profile(self, obj):
         profile = obj.get_profile()
         if profile:
