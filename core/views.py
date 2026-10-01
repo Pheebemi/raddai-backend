@@ -1221,7 +1221,8 @@ def exam_portal_roster(request):
             for c in classes
         ],
         'subjects': [
-            {'id': s.id, 'name': s.name, 'code': s.code}
+            # grades: the class grades that take this subject; empty means every class.
+            {'id': s.id, 'name': s.name, 'code': s.code, 'grades': s.grades}
             for s in subjects
         ],
         'students': [

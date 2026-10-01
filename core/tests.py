@@ -884,3 +884,14 @@ class ExamPortalRosterAccessTests(APITestCase):
         User.objects.create_user(username='here', password='pw12345!', role='management')
         response = self.client.get(self.url, HTTP_X_EXAM_PORTAL_KEY='test-exam-key')
         self.assertEqual([m['username'] for m in response.data['managers']], ['here'])
+
+
+@override_settings(EXAM_PORTAL_API_KEY='test-exam-key')
+class ExamPortalRosterSubjectTests(APITestCase):
+    def test_subjects_carry_their_grades(self):
+        from .models import Subject
+        Subject.objects.create(name='Basic Science', code='BSC', grades=[7, 8, 9])
+        Subject.objects.create(name='English', code='ENG', grades=[])
+        response = self.client.get('/api/exam-portal/roster/', HTTP_X_EXAM_PORTAL_KEY='test-exam-key')
+        grades = {s['name']: s['grades'] for s in response.data['subjects']}
+        self.assertEqual(grades, {'Basic Science': [7, 8, 9], 'English': []})
