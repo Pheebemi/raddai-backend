@@ -351,7 +351,9 @@ class FeePayment(models.Model):
         PARTIAL = 'partial', 'Partial'
 
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='fee_payments')
-    fee_structure = models.ForeignKey(FeeStructure, on_delete=models.CASCADE)
+    # PROTECT: deleting a fee structure must never wipe the payments recorded
+    # under it (CASCADE used to). Edit the amount instead.
+    fee_structure = models.ForeignKey(FeeStructure, on_delete=models.PROTECT)
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, null=True, blank=True)
 
     class Term(models.TextChoices):

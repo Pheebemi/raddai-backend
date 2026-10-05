@@ -437,6 +437,16 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
+    def destroy(self, request, *args, **kwargs):
+        fee_structure = self.get_object()
+        paid = FeePayment.objects.filter(fee_structure=fee_structure).count()
+        if paid:
+            return Response({
+                'error': f"Can't delete this fee: {paid} payment{'s are' if paid != 1 else ' is'} recorded under it. "
+                         "Edit the amount instead."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        return super().destroy(request, *args, **kwargs)
+
 
 def _resolve_tuition_fee(student, academic_year):
     """Resolve the most specific tuition rate for a student's current class."""
@@ -778,7 +788,6 @@ def flutterwave_webhook(request):
     Flutterwave calls this endpoint directly when a payment completes.
     Runs server-to-server — independent of the user's browser.
     """
-    import requests as http_requests
     from django.conf import settings as django_settings
     import calendar
     from datetime import date
@@ -834,26 +843,21 @@ def flutterwave_webhook(request):
     if FeePayment.objects.filter(transaction_id=str(transaction_id)).exists():
         return Response({'status': 'already_recorded'})
 
-    # Verify with Flutterwave API
-    secret_key = getattr(django_settings, 'FLUTTERWAVE_SECRET_KEY', '')
-    try:
-        flw_response = http_requests.get(
-            f'https://api.flutterwave.com/v3/transactions/{transaction_id}/verify',
-            headers={'Authorization': f'Bearer {secret_key}'},
-            timeout=30,
-        )
-        flw_data = flw_response.json()
-        if flw_data.get('status') != 'success' or flw_data.get('data', {}).get('status') != 'successful':
-            return Response({'status': 'verification_failed'})
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    verified = _verify_with_flutterwave(transaction_id)
+    if not verified:
+        return Response({'status': 'verification_failed'})
+    verified_amount = float(verified.get('amount', 0))
 
-    # Extract student info from tx_ref (format: school_fee_{user_id}_{timestamp})
-    # We need to find the student from the meta or tx_ref
-    meta = tx_data.get('meta', {})
-    student_id = meta.get('student_id') if meta else None
+    # The fees page sends student_id/term/academic_year as Flutterwave meta.
+    # Prefer the copy from the verify call (Flutterwave's own record); the
+    # webhook body may carry it as `meta` or `meta_data`.
+    meta = verified.get('meta') or tx_data.get('meta') or tx_data.get('meta_data') or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    student_id = meta.get('student_id')
 
-    # Try to parse student_id from tx_ref: school_fee_{user_id}_{timestamp}
+    # Older payments carry no meta: tx_ref is school_fee_{user_id}_{timestamp},
+    # which identifies a paying student (not a parent's child).
     if not student_id and tx_ref.startswith('school_fee_'):
         try:
             user_id = int(tx_ref.split('_')[2])
@@ -868,22 +872,25 @@ def flutterwave_webhook(request):
 
     try:
         student = Student.objects.get(id=student_id)
-    except Student.DoesNotExist:
+    except (Student.DoesNotExist, ValueError, TypeError):
         return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Get active academic year
-    academic_year = AcademicYear.objects.filter(is_active=True).first()
+    academic_year = None
+    if meta.get('academic_year'):
+        academic_year = AcademicYear.objects.filter(id=meta.get('academic_year')).first()
+    academic_year = academic_year or AcademicYear.objects.filter(is_active=True).first()
     if not academic_year:
         return Response({'error': 'No active academic year'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Find fee structure
-        fee_structure = _resolve_tuition_fee(student, academic_year)
+    fee_structure = _resolve_tuition_fee(student, academic_year)
+    if not fee_structure:
+        return Response({'error': 'No fee structure for this student'}, status=status.HTTP_400_BAD_REQUEST)
+    total_amount = float(fee_structure.amount)
 
-    total_amount = float(fee_structure.amount) if fee_structure else verified_amount
-
-    # Term from meta or default to first available unpaid term
-    term = meta.get('term') if meta else None
-    if not term:
+    # Term from meta, else the first term not yet fully paid
+    term = meta.get('term')
+    if term not in ('first', 'second', 'third'):
+        term = None
         for t in ['first', 'second', 'third']:
             if not FeePayment.objects.filter(student=student, academic_year=academic_year, term=t, status='paid').exists():
                 term = t
