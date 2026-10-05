@@ -895,3 +895,99 @@ class ExamPortalRosterSubjectTests(APITestCase):
         response = self.client.get('/api/exam-portal/roster/', HTTP_X_EXAM_PORTAL_KEY='test-exam-key')
         grades = {s['name']: s['grades'] for s in response.data['subjects']}
         self.assertEqual(grades, {'Basic Science': [7, 8, 9], 'English': []})
+
+
+class FeeWebhookTests(FeeResolutionTests):
+    """Flutterwave's server-to-server call must record school fees even if the payer's browser never comes back."""
+
+    def post_webhook(self, tx_id, amount, tx_ref, meta=None):
+        from unittest.mock import patch
+
+        verified = {'id': tx_id, 'amount': amount, 'status': 'successful', 'currency': 'NGN', 'meta': meta}
+        payload = {
+            'event': 'charge.completed',
+            'data': {'id': tx_id, 'tx_ref': tx_ref, 'status': 'successful', 'currency': 'NGN', 'amount': amount},
+        }
+        self.client.force_authenticate(user=None)
+        with patch('core.views._verify_with_flutterwave', return_value=verified):
+            return self.client.post('/api/payments/webhook/', payload, format='json')
+
+    def test_records_payment_for_the_term_in_meta(self):
+        meta = {'student_id': self.student.id, 'term': 'second', 'academic_year': self.year.id}
+        response = self.post_webhook(70001, 50000, f'school_fee_{self.student_user.id}_1', meta)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['status'], 'recorded')
+        payment = FeePayment.objects.get()
+        self.assertEqual((payment.student, payment.term, payment.academic_year), (self.student, 'second', self.year))
+        self.assertEqual(float(payment.amount_paid), 50000)
+        self.assertEqual(float(payment.total_amount), 150000)  # the student's specific section rate
+        self.assertEqual(payment.status, 'partial')
+        self.assertEqual(payment.payment_method, 'flutterwave')
+        self.assertEqual(payment.transaction_id, '70001')
+
+    def test_old_payment_without_meta_uses_tx_ref_and_first_unpaid_term(self):
+        response = self.post_webhook(70002, 150000, f'school_fee_{self.student_user.id}_2')
+
+        self.assertEqual(response.json()['status'], 'recorded')
+        payment = FeePayment.objects.get()
+        self.assertEqual((payment.term, payment.status), ('first', 'paid'))
+
+    def test_parent_payment_for_a_child(self):
+        parent = User.objects.create_user(username='parent1', password='pw12345!', role='parent')
+        meta = {'student_id': self.student.id, 'term': 'first', 'academic_year': self.year.id}
+        response = self.post_webhook(70003, 150000, f'school_fee_{parent.id}_3', meta)
+
+        self.assertEqual(response.json()['status'], 'recorded')
+        self.assertEqual(FeePayment.objects.get().student, self.student)
+
+    def test_replay_does_not_double_record(self):
+        meta = {'student_id': self.student.id, 'term': 'first', 'academic_year': self.year.id}
+        self.post_webhook(70004, 50000, f'school_fee_{self.student_user.id}_4', meta)
+        second = self.post_webhook(70004, 50000, f'school_fee_{self.student_user.id}_4', meta)
+
+        self.assertEqual(second.json()['status'], 'already_recorded')
+        self.assertEqual(float(FeePayment.objects.get().amount_paid), 50000)
+
+    def test_unverified_payment_is_not_recorded(self):
+        from unittest.mock import patch
+
+        payload = {'event': 'charge.completed', 'data': {
+            'id': 70005, 'tx_ref': f'school_fee_{self.student_user.id}_5', 'status': 'successful',
+            'currency': 'NGN', 'amount': 150000,
+        }}
+        with patch('core.views._verify_with_flutterwave', return_value=None):
+            response = self.client.post('/api/payments/webhook/', payload, format='json')
+
+        self.assertEqual(response.json()['status'], 'verification_failed')
+        self.assertFalse(FeePayment.objects.exists())
+
+
+class FeeStructureDeleteTests(FeeResolutionTests):
+    """Deleting a fee structure must never wipe the payments recorded under it."""
+
+    def test_fee_with_payments_cannot_be_deleted(self):
+        FeePayment.objects.create(
+            student=self.student, fee_structure=self.section_override, academic_year=self.year, term='first',
+            amount_paid=150000, total_amount=150000, status='paid', due_date=date(2027, 9, 30), transaction_id='T1',
+        )
+        response = self.client.delete(f'/api/fee-structures/{self.section_override.id}/')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('1 payment is recorded', response.json()['error'])
+        self.assertTrue(FeeStructure.objects.filter(pk=self.section_override.pk).exists())
+        self.assertEqual(FeePayment.objects.count(), 1)
+
+    def test_unused_fee_can_still_be_deleted(self):
+        response = self.client.delete(f'/api/fee-structures/{self.generic_new.id}/')
+        self.assertEqual(response.status_code, 204)
+
+    def test_editing_the_amount_keeps_payments(self):
+        FeePayment.objects.create(
+            student=self.student, fee_structure=self.section_override, academic_year=self.year, term='first',
+            amount_paid=50000, total_amount=150000, status='partial', due_date=date(2027, 9, 30), transaction_id='T2',
+        )
+        response = self.client.patch(f'/api/fee-structures/{self.section_override.id}/', {'amount': 160000}, format='json')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(FeePayment.objects.count(), 1)
