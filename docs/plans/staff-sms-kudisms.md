@@ -9,11 +9,11 @@
 - **Sender ID: `Laazeere`** (8 characters, under the 11-character limit).
 - **Route: DND** (KudiSMS gateway 2), so staff on Nigeria's do-not-disturb list still receive messages.
 - **Account:** the owner's own KudiSMS account, which holds the sender ID. Its API key goes in the server's environment.
+- **Who can send: management only** (management and admin roles). Teachers, students and parents get no access to the page or the API.
 - The KudiSMS API key lives only in the server's environment, never in the frontend, the same way the Flutterwave keys do.
 
 ## Still to decide before building
-1. **Who can send:** management and admin only (assumed), or teachers as well.
-2. **How many staff have a phone number saved.** The page will list those without one, so this can be fixed.
+1. **How many staff have a phone number saved.** The page will list those without one, so this can be fixed.
 
 Confirm on the KudiSMS dashboard that `Laazeere` is approved and works on the DND route. The first test send checks this too.
 
