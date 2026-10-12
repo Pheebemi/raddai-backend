@@ -6,13 +6,16 @@
 - **Direct to KudiSMS.** The school portal calls KudiSMS itself with the school's sender ID. It does **not** go through the Reachly bulk SMS platform (`bulk-backend` / `bulk-frontend`).
 - **Audience for now: staff only.** Parents and students come later (see Phase 2).
 - The school pays KudiSMS directly (tops up its KudiSMS balance there). No wallet or pricing inside the portal.
+- **Sender ID: `Laazeere`** (8 characters, under the 11-character limit).
+- **Route: DND** (KudiSMS gateway 2), so staff on Nigeria's do-not-disturb list still receive messages.
+- **Account:** the owner's own KudiSMS account, which holds the sender ID. Its API key goes in the server's environment.
 - The KudiSMS API key lives only in the server's environment, never in the frontend, the same way the Flutterwave keys do.
 
 ## Still to decide before building
-1. **Sender ID name** (e.g. "Laazeere") and which KudiSMS account holds it (a separate Laazeere account, or the one the bulk platform uses).
-2. **Route:** KudiSMS's normal ("promotional", gateway 1) route, or the DND route (gateway 2) that also reaches numbers on Nigeria's do-not-disturb list. Staff notices are better on DND for reliability. Ask KudiSMS which route the sender ID is approved for.
-3. **Who can send:** management and admin only (assumed), or teachers as well.
-4. **How many staff have a phone number saved.** The page will list those without one, so this can be fixed.
+1. **Who can send:** management and admin only (assumed), or teachers as well.
+2. **How many staff have a phone number saved.** The page will list those without one, so this can be fixed.
+
+Confirm on the KudiSMS dashboard that `Laazeere` is approved and works on the DND route. The first test send checks this too.
 
 ## How it will look
 Management sidebar → **Send SMS**:
@@ -24,7 +27,7 @@ Management sidebar → **Send SMS**:
 6. A **KudiSMS balance** chip at the top, with a low-balance warning.
 
 ## Backend (raddai-backend, cPanel + MySQL)
-- **Settings (env on cPanel):** `KUDISMS_API_KEY`, `KUDISMS_BASE_URL` (default `https://my.kudisms.net`), `KUDISMS_SENDER_ID`, `KUDISMS_ROUTE` (`dnd` or `generic`), and `KUDISMS_DRY_RUN=1` for local development so nothing real is sent.
+- **Settings (env on cPanel):** `KUDISMS_API_KEY`, `KUDISMS_BASE_URL` (default `https://my.kudisms.net`), `KUDISMS_SENDER_ID` (`Laazeere`), `KUDISMS_ROUTE` (`dnd`), and `KUDISMS_DRY_RUN=1` for local development so nothing real is sent.
 - **Client** (`core/kudisms.py`), ported from `bulk-backend/integrations/kudisms.py`:
   - Requests must be sent as multipart/form-data (form-urlencoded returns "missing parameters").
   - 100 numbers per call (KudiSMS error 108); 30 second timeout.
