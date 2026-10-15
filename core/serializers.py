@@ -3,7 +3,7 @@ from django.contrib.auth import authenticate
 from .models import (
     User, AcademicYear, Class, Subject, Student, Staff, Parent,
     Result, FeeStructure, FeePayment, StaffSalary, Announcement, Attendance,
-    AdmissionSetting, AdmissionFee, Application, ClassLevel, get_today
+    AdmissionSetting, AdmissionFee, Application, ClassLevel, get_today, score_limits_for_grade
 )
 
 
@@ -259,13 +259,14 @@ class ResultSerializer(serializers.ModelSerializer):
     payment_status = serializers.SerializerMethodField()
     class_name = serializers.SerializerMethodField()
     class_id = serializers.SerializerMethodField()
+    class_grade = serializers.SerializerMethodField()
 
     class Meta:
         model = Result
         fields = [
             'id', 'student', 'student_name', 'subject', 'subject_name',
             'academic_year', 'academic_year_name', 'term', 'recorded_class',
-            'payment_status', 'class_name', 'class_id',
+            'payment_status', 'class_name', 'class_id', 'class_grade',
             'ca1_score', 'ca2_score', 'ca3_score', 'ca4_score', 'ca_total',
             'exam_score', 'marks_obtained', 'total_marks', 'percentage',
             'grade', 'remarks', 'uploaded_by', 'uploaded_by_name', 'upload_date'
@@ -317,25 +318,38 @@ class ResultSerializer(serializers.ModelSerializer):
             return str(obj.student.current_class.id)
         return None
 
-    def validate_ca1_score(self, value):
-        if value < 0 or value > 10:
-            raise serializers.ValidationError("CA1 score must be between 0 and 10")
-        return value
+    def get_class_grade(self, obj):
+        """The class level (e.g. -1 for Nursery 2, 10 for SS 1), so screens know which score scheme applies."""
+        klass = obj.recorded_class or (obj.student.current_class if obj.student_id else None)
+        return klass.grade if klass else None
 
-    def validate_ca2_score(self, value):
-        if value < 0 or value > 10:
-            raise serializers.ValidationError("CA2 score must be between 0 and 10")
-        return value
+    SCORE_LABELS = {'ca1_score': 'CA1', 'ca2_score': 'CA2', 'ca3_score': 'CA3', 'exam_score': 'Exam'}
 
-    def validate_ca3_score(self, value):
-        if value < 0 or value > 10:
-            raise serializers.ValidationError("CA3 score must be between 0 and 10")
-        return value
-
-    def validate_exam_score(self, value):
-        if value < 0 or value > 70:
-            raise serializers.ValidationError("Exam score must be between 0 and 70")
-        return value
+    def validate(self, attrs):
+        """
+        The highest mark depends on the class: Pre-Nursery to Nursery 2 use
+        20 / 20 / no CA3 / 60, every other class 10 / 10 / 10 / 70 (both total 100).
+        """
+        student = attrs.get('student') or (self.instance.student if self.instance else None)
+        klass = (
+            attrs.get('recorded_class')
+            or (self.instance.recorded_class if self.instance else None)
+            or (student.current_class if student else None)
+        )
+        limits = score_limits_for_grade(klass.grade if klass else None)
+        errors = {}
+        for field, label in self.SCORE_LABELS.items():
+            value = attrs.get(field)
+            if value is None:
+                continue
+            maximum = limits[field]
+            if maximum == 0 and value != 0:
+                errors[field] = f"{label} is not used for this class"
+            elif value < 0 or value > maximum:
+                errors[field] = f"{label} score must be between 0 and {maximum}"
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class FeeStructureSerializer(serializers.ModelSerializer):

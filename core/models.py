@@ -217,6 +217,20 @@ class Parent(models.Model):
         return f"{self.user.get_full_name()} (ID: {self.parent_id})"
 
 
+def score_limits_for_grade(grade):
+    """
+    The highest mark for each score slot, by class level. Both schemes total 100,
+    so marks_obtained and the grade work the same for everyone.
+
+    - Pre-Nursery (Playclass) to Nursery 2, grades below 1: 1st CA out of 20,
+      2nd CA out of 20, no 3rd CA, exam out of 60.
+    - Every other class: three CAs out of 10 each and an exam out of 70.
+    """
+    if grade is not None and grade < 1:
+        return {'ca1_score': 20, 'ca2_score': 20, 'ca3_score': 0, 'exam_score': 60}
+    return {'ca1_score': 10, 'ca2_score': 10, 'ca3_score': 10, 'exam_score': 70}
+
+
 class Result(models.Model):
     """Academic result model"""
 
