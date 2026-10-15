@@ -991,3 +991,80 @@ class FeeStructureDeleteTests(FeeResolutionTests):
 
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(FeePayment.objects.count(), 1)
+
+
+
+class StudentDeleteTests(APITestCase):
+    """Deleting a student takes results, fee payments and attendance with it, so it must be deliberate."""
+
+    def setUp(self):
+        from .models import Attendance, Result, Subject
+
+        self.manager = User.objects.create_user(username='del-manager', password='pw12345!', role='management')
+        self.year = AcademicYear.objects.create(
+            name='2026-2027', start_date=date(2026, 9, 1), end_date=date(2027, 7, 31), is_active=True
+        )
+        self.klass = Class.objects.create(name='SS 1 A', grade=10, section='A', academic_year=self.year)
+        self.student_user = User.objects.create_user(username='LAZ-SS-0228', password='pw12345!', role='student')
+        self.student = Student.objects.create(user=self.student_user, student_id='LAZ-SS-0228', current_class=self.klass)
+        self.empty_user = User.objects.create_user(username='LAZ-SS-0300', password='pw12345!', role='student')
+        self.empty = Student.objects.create(user=self.empty_user, student_id='LAZ-SS-0300', current_class=self.klass)
+
+        subject = Subject.objects.create(name='Agricultural Science')
+        Result.objects.create(student=self.student, subject=subject, academic_year=self.year, term='first', ca1_score=4)
+        fee = FeeStructure.objects.create(
+            academic_year=self.year, grade=10, fee_type='tuition', student_type='new', amount=100000
+        )
+        FeePayment.objects.create(
+            student=self.student, fee_structure=fee, academic_year=self.year, term='first', amount_paid=50000,
+            total_amount=100000, status='partial', due_date=date(2026, 9, 30), transaction_id='T-DEL-1',
+        )
+        Attendance.objects.create(student=self.student, date=date(2026, 9, 14), status='present', class_period=self.klass)
+        Attendance.objects.create(student=self.student, date=date(2026, 9, 15), status='absent', class_period=self.klass)
+        self.url = f'/api/students/{self.student.id}/'
+        self.client.force_authenticate(user=self.manager)
+
+    def test_impact_lists_what_would_be_deleted(self):
+        response = self.client.get(self.url + 'delete-impact/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['counts'], {'results': 1, 'fee_payments': 1, 'attendance': 2})
+
+    def test_student_with_records_is_not_deleted_without_confirmation(self):
+        response = self.client.delete(self.url)
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.json()['needs_confirm'])
+        self.assertIn('1 result, 1 fee payment, 2 attendance records', response.json()['error'])
+        self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
+
+    def test_wrong_confirmation_is_refused(self):
+        for wrong in ('', 'laz-ss-0228x', 'LAZ-SS-0001'):
+            response = self.client.delete(self.url + f'?confirm={wrong}')
+            self.assertEqual(response.status_code, 409, wrong)
+        self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
+
+    def test_confirming_with_the_student_id_deletes_everything(self):
+        from .models import Attendance, Result
+
+        response = self.client.delete(self.url + '?confirm=LAZ-SS-0228')
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Student.objects.filter(pk=self.student.pk).exists())
+        self.assertFalse(Result.objects.exists())
+        self.assertFalse(FeePayment.objects.exists())
+        self.assertFalse(Attendance.objects.exists())
+
+    def test_student_without_records_deletes_with_a_normal_confirm(self):
+        response = self.client.delete(f'/api/students/{self.empty.id}/')
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Student.objects.filter(pk=self.empty.pk).exists())
+        self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
+
+    def test_only_management_and_admin_can_delete(self):
+        admin = User.objects.create_user(username='del-admin', password='pw12345!', role='admin')
+        for who in (self.student_user, User.objects.create_user(username='p1', password='pw12345!', role='parent'),
+                    User.objects.create_user(username='t1', password='pw12345!', role='staff')):
+            self.client.force_authenticate(user=who)
+            self.assertEqual(self.client.delete(self.url + '?confirm=LAZ-SS-0228').status_code, 403, who.role)
+            self.assertEqual(self.client.get(self.url + 'delete-impact/').status_code, 403, who.role)
+        self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
+        self.client.force_authenticate(user=admin)
+        self.assertEqual(self.client.delete(self.url + '?confirm=LAZ-SS-0228').status_code, 204)
