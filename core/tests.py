@@ -7,7 +7,7 @@ from django.core.management import call_command
 
 from .models import (
     AcademicYear, AdmissionSetting, AdmissionFee, Application, Class, FeePayment,
-    FeeStructure, Staff, StaffSalary, Student, User,
+    FeeStructure, Result, Staff, StaffSalary, Student, User, score_limits_for_grade,
 )
 from .views import _mark_application_paid
 
@@ -1068,3 +1068,100 @@ class StudentDeleteTests(APITestCase):
         self.assertTrue(Student.objects.filter(pk=self.student.pk).exists())
         self.client.force_authenticate(user=admin)
         self.assertEqual(self.client.delete(self.url + '?confirm=LAZ-SS-0228').status_code, 204)
+
+
+class ScoreSchemeTests(APITestCase):
+    """Pre-Nursery to Nursery 2 mark 20 / 20 / no CA3 / 60; every other class 10 / 10 / 10 / 70. Both total 100."""
+
+    def setUp(self):
+        from .models import Subject
+
+        self.manager = User.objects.create_user(username='score-manager', password='pw12345!', role='management')
+        self.year = AcademicYear.objects.create(
+            name='2026-2027', start_date=date(2026, 9, 1), end_date=date(2027, 7, 31), is_active=True
+        )
+        self.subject = Subject.objects.create(name='Number Work')
+        self.classes = {
+            grade: Class.objects.create(name=name, grade=grade, section='A', academic_year=self.year)
+            for grade, name in ((-3, 'Playclass'), (-2, 'Nursery 1'), (-1, 'Nursery 2'), (1, 'Primary 1'), (10, 'SS 1'))
+        }
+        self.students = {}
+        for grade, klass in self.classes.items():
+            user = User.objects.create_user(username=f'kid{grade}', password='pw12345!', role='student')
+            self.students[grade] = Student.objects.create(user=user, student_id=f'KID-{grade}', current_class=klass)
+        self.client.force_authenticate(user=self.manager)
+
+    def post(self, grade, **scores):
+        return self.client.post('/api/results/', {
+            'student': self.students[grade].id, 'subject': self.subject.id, 'academic_year': self.year.id,
+            'term': 'first', 'recorded_class': self.classes[grade].id, **scores,
+        }, format='json')
+
+    def test_limits_by_level(self):
+        for grade in (-3, -2, -1):
+            self.assertEqual(
+                score_limits_for_grade(grade), {'ca1_score': 20, 'ca2_score': 20, 'ca3_score': 0, 'exam_score': 60}
+            )
+        for grade in (1, 6, 7, 10, 12):
+            self.assertEqual(
+                score_limits_for_grade(grade), {'ca1_score': 10, 'ca2_score': 10, 'ca3_score': 10, 'exam_score': 70}
+            )
+        self.assertEqual(score_limits_for_grade(None)['exam_score'], 70)
+
+    def test_nursery_classes_accept_20_20_60_and_total_100(self):
+        for grade in (-3, -2, -1):
+            Result.objects.all().delete()
+            response = self.post(grade, ca1_score=20, ca2_score=20, ca3_score=0, exam_score=60)
+            self.assertEqual(response.status_code, 201, (grade, response.content))
+            result = Result.objects.get()
+            self.assertEqual((float(result.marks_obtained), float(result.total_marks), result.grade), (100.0, 100.0, 'A+'))
+            self.assertEqual(response.json()['class_grade'], grade)
+
+    def test_nursery_marks_over_the_new_limits_are_refused(self):
+        for field, too_much, message in (
+            ('ca1_score', 21, 'CA1 score must be between 0 and 20'),
+            ('ca2_score', 21, 'CA2 score must be between 0 and 20'),
+            ('exam_score', 61, 'Exam score must be between 0 and 60'),
+        ):
+            response = self.post(-1, **{field: too_much})
+            self.assertEqual(response.status_code, 400, field)
+            self.assertEqual(response.json()[field], [message])
+        self.assertFalse(Result.objects.exists())
+
+    def test_nursery_has_no_third_ca(self):
+        response = self.post(-2, ca3_score=5)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['ca3_score'], ['CA3 is not used for this class'])
+        self.assertEqual(self.post(-2, ca3_score=0, ca1_score=10).status_code, 201)
+
+    def test_other_classes_keep_10_10_10_70(self):
+        for grade in (1, 10):
+            Result.objects.all().delete()
+            self.assertEqual(self.post(grade, ca1_score=10, ca2_score=10, ca3_score=10, exam_score=70).status_code, 201)
+            self.assertEqual(float(Result.objects.get().marks_obtained), 100.0)
+            for field, too_much in (('ca1_score', 11), ('ca2_score', 11), ('ca3_score', 11), ('exam_score', 71)):
+                self.assertEqual(self.post(grade, **{field: too_much}).status_code, 400, (grade, field))
+
+    def test_a_nursery_mark_of_20_is_refused_for_primary_1(self):
+        self.assertEqual(self.post(1, ca1_score=20).status_code, 400)
+
+    def test_editing_uses_the_class_the_result_was_recorded_for(self):
+        result_id = self.post(-1, ca1_score=15, exam_score=50).json()['id']
+        ok = self.client.patch(f'/api/results/{result_id}/', {'ca2_score': 20, 'exam_score': 60}, format='json')
+        self.assertEqual(ok.status_code, 200, ok.content)
+        bad = self.client.patch(f'/api/results/{result_id}/', {'exam_score': 61}, format='json')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_class_is_taken_from_the_students_class_when_none_is_sent(self):
+        response = self.client.post('/api/results/', {
+            'student': self.students[-1].id, 'subject': self.subject.id, 'academic_year': self.year.id,
+            'term': 'second', 'ca1_score': 20, 'exam_score': 60,
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['class_grade'], -1)
+
+    def test_results_list_carries_the_class_level(self):
+        self.post(-3, ca1_score=12)
+        self.post(10, ca1_score=8)
+        grades = {r['class_grade'] for r in self.client.get('/api/results/').json().get('results', [])}
+        self.assertEqual(grades, {-3, 10})
