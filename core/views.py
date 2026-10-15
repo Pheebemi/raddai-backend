@@ -206,7 +206,43 @@ class StudentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             return [permissions.IsAuthenticated()]
+        if self.action in ('destroy', 'delete_impact'):
+            # Deleting a student wipes records. Only management/admin may — a
+            # student or parent owning the profile must not be able to.
+            return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
+
+    @staticmethod
+    def _delete_counts(student):
+        """What deleting this student takes with it (these rows are deleted together with the profile)."""
+        return {
+            'results': student.results.count(),
+            'fee_payments': student.fee_payments.count(),
+            'attendance': student.attendance.count(),
+        }
+
+    @action(detail=True, methods=['get'], url_path='delete-impact')
+    def delete_impact(self, request, pk=None):
+        """Shown in the delete box before anything is deleted."""
+        student = self.get_object()
+        return Response({'student_id': student.student_id, 'counts': self._delete_counts(student)})
+
+    def destroy(self, request, *args, **kwargs):
+        student = self.get_object()
+        counts = self._delete_counts(student)
+        if any(counts.values()) and (request.query_params.get('confirm') or '').strip() != student.student_id:
+            parts = [
+                f"{counts['results']} result{'s' if counts['results'] != 1 else ''}",
+                f"{counts['fee_payments']} fee payment{'s' if counts['fee_payments'] != 1 else ''}",
+                f"{counts['attendance']} attendance record{'s' if counts['attendance'] != 1 else ''}",
+            ]
+            return Response({
+                'error': f"{student.student_id} has {', '.join(parts)}. Deleting the student deletes all of them. "
+                         f"Type the student ID to confirm.",
+                'counts': counts,
+                'needs_confirm': True,
+            }, status=status.HTTP_409_CONFLICT)
+        return super().destroy(request, *args, **kwargs)
 
     def get_queryset(self):
         user = self.request.user
