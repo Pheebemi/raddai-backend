@@ -72,6 +72,15 @@ class IsManagementOrAdmin(permissions.BasePermission):
         return request.user.role in ['management', 'admin']
 
 
+class IsStaffManagementOrAdmin(permissions.BasePermission):
+    """Teachers, management and admin. Students and parents may only read."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        return request.user.role in ['staff', 'management', 'admin']
+
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -819,6 +828,36 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
     pagination_class = None
+
+    def get_permissions(self):
+        # Marking, changing and deleting attendance is for teachers and
+        # management; a parent or student can only read their own records.
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'delete_day']:
+            return [permissions.IsAuthenticated(), IsStaffManagementOrAdmin()]
+        return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
+
+    @action(detail=False, methods=['post'], url_path='delete-day')
+    def delete_day(self, request):
+        """
+        Remove every attendance record for one class on one date, e.g. a
+        Saturday or Sunday that was marked by mistake. A teacher can only do
+        this for the class they teach; management and admin for any class.
+        """
+        date = request.data.get('date')
+        class_id = request.data.get('class_period')
+        if not date or not class_id:
+            return Response({'error': 'date and class_period are required'}, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user
+        if user.role == 'staff':
+            teaches = Class.objects.filter(pk=class_id, class_teacher__user=user).exists()
+            if not teaches:
+                return Response({'error': 'You can only delete attendance for your own class'},
+                                status=status.HTTP_403_FORBIDDEN)
+        try:
+            deleted, _ = Attendance.objects.filter(date=date, class_period_id=class_id).delete()
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid date or class'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'deleted': deleted})
 
     def get_queryset(self):
         date = self.request.query_params.get('date')

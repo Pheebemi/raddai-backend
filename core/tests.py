@@ -1258,3 +1258,80 @@ class FeeChangeRecalculationTests(APITestCase):
         self._edit_fee(24000)  # a change to this year's fee
         old = FeePayment.objects.get(transaction_id='OLD')
         self.assertEqual((old.total_amount, old.status), (20000, 'paid'))
+
+
+class AttendanceDeleteDayTests(APITestCase):
+    """A teacher can wipe a day marked by mistake (e.g. a Saturday), for their own class only."""
+
+    def setUp(self):
+        from .models import Attendance
+
+        self.year = AcademicYear.objects.create(
+            name='2026-2027', start_date=date(2026, 9, 1), end_date=date(2027, 7, 31), is_active=True
+        )
+        self.mine = Class.objects.create(name='JSS 1 A', grade=7, section='A', academic_year=self.year)
+        self.other = Class.objects.create(name='JSS 2 A', grade=8, section='A', academic_year=self.year)
+        teacher_user = User.objects.create_user(username='teach', password='pw12345!', role='staff')
+        self.teacher = Staff.objects.create(user=teacher_user, staff_id='T1')
+        self.mine.class_teacher = self.teacher
+        self.mine.save()
+        self.teacher_user = teacher_user
+        self.saturday = date(2026, 10, 17)
+        self.monday = date(2026, 10, 19)
+        self.kids = []
+        for n in range(3):
+            u = User.objects.create_user(username=f'kid{n}', password='pw12345!', role='student')
+            kid = Student.objects.create(user=u, student_id=f'K{n}', current_class=self.mine)
+            self.kids.append(kid)
+            for d in (self.saturday, self.monday):
+                Attendance.objects.create(student=kid, date=d, status='present', class_period=self.mine, marked_by=self.teacher)
+        other_user = User.objects.create_user(username='otherkid', password='pw12345!', role='student')
+        self.other_kid = Student.objects.create(user=other_user, student_id='O1', current_class=self.other)
+        Attendance.objects.create(student=self.other_kid, date=self.saturday, status='present', class_period=self.other)
+        self.url = '/api/attendance/delete-day/'
+        self.client.force_authenticate(user=teacher_user)
+
+    def _delete(self, d, klass=None):
+        return self.client.post(self.url, {'date': str(d), 'class_period': (klass or self.mine).id}, format='json')
+
+    def test_teacher_deletes_a_day_for_their_class_only(self):
+        from .models import Attendance
+        response = self._delete(self.saturday)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'deleted': 3})
+        self.assertFalse(Attendance.objects.filter(class_period=self.mine, date=self.saturday).exists())
+        self.assertEqual(Attendance.objects.filter(class_period=self.mine, date=self.monday).count(), 3)
+        self.assertEqual(Attendance.objects.filter(class_period=self.other).count(), 1)
+
+    def test_teacher_cannot_delete_another_classes_attendance(self):
+        from .models import Attendance
+        response = self._delete(self.saturday, self.other)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(Attendance.objects.filter(class_period=self.other).count(), 1)
+
+    def test_management_can_delete_any_class(self):
+        from .models import Attendance
+        manager = User.objects.create_user(username='mgr', password='pw12345!', role='management')
+        self.client.force_authenticate(user=manager)
+        self.assertEqual(self._delete(self.saturday, self.other).json(), {'deleted': 1})
+        self.assertFalse(Attendance.objects.filter(class_period=self.other).exists())
+
+    def test_parent_and_student_cannot_delete(self):
+        from .models import Attendance
+        self.client.force_authenticate(user=self.kids[0].user)
+        self.assertEqual(self._delete(self.saturday).status_code, 403)
+        parent_user = User.objects.create_user(username='par', password='pw12345!', role='parent')
+        from .models import Parent
+        parent = Parent.objects.create(user=parent_user, parent_id='P1')
+        parent.children.add(self.kids[0])
+        self.client.force_authenticate(user=parent_user)
+        self.assertEqual(self._delete(self.saturday).status_code, 403)
+        record = Attendance.objects.filter(student=self.kids[0], date=self.saturday).first()
+        self.assertEqual(self.client.delete(f'/api/attendance/{record.id}/').status_code, 403)
+        self.assertEqual(Attendance.objects.filter(class_period=self.mine).count(), 6)
+
+    def test_date_and_class_are_required(self):
+        self.assertEqual(self.client.post(self.url, {}, format='json').status_code, 400)
+
+    def test_a_day_with_no_records_deletes_nothing(self):
+        self.assertEqual(self._delete(date(2026, 10, 18)).json(), {'deleted': 0})
