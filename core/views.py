@@ -473,6 +473,19 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
 
+    def _refresh_payments(self, fee_structure):
+        # A changed fee must reach everyone who already paid under that grade.
+        refresh_payment_totals(FeePayment.objects.filter(
+            Q(fee_structure__grade=fee_structure.grade) | Q(student__current_class__grade=fee_structure.grade),
+            academic_year=fee_structure.academic_year,
+        ).distinct())
+
+    def perform_create(self, serializer):
+        self._refresh_payments(serializer.save())
+
+    def perform_update(self, serializer):
+        self._refresh_payments(serializer.save())
+
     def destroy(self, request, *args, **kwargs):
         fee_structure = self.get_object()
         paid = FeePayment.objects.filter(fee_structure=fee_structure).count()
@@ -511,6 +524,62 @@ def _resolve_tuition_fee(student, academic_year):
     return fee_structure
 
 
+def _current_tuition_for_payment(payment):
+    """
+    The tuition rate a payment should be measured against *today*. For the
+    student's current session that is the most specific rate for their class;
+    for an older session (the student has since moved up) it is the rate the
+    payment was recorded under, which is read live so an edited amount counts.
+    """
+    student, year, recorded = payment.student, payment.academic_year, payment.fee_structure
+    current_class = student.current_class
+    if year and current_class and current_class.academic_year_id == year.id:
+        resolved = _resolve_tuition_fee(student, year)
+        if resolved:
+            return resolved
+    if recorded and recorded.fee_type == FeeStructure.FeeType.TUITION:
+        return recorded
+    return None
+
+
+def refresh_payment_totals(payments):
+    """
+    A payment stores the fee and the Paid/Partial status as they were when it
+    was recorded, so changing a fee left everyone who had already paid showing
+    the old total (paid the new full fee, still "Part paid"). Re-measure each
+    payment against the current rate: update its total, and its status from
+    what was actually paid. Money received (amount_paid) is never changed.
+    Returns how many payments were updated.
+    """
+    updated = 0
+    qs = payments.select_related('student__current_class', 'academic_year', 'fee_structure')
+    for payment in qs:
+        fee = _current_tuition_for_payment(payment)
+        if not fee:
+            continue
+        total = fee.amount
+        paid = payment.amount_paid or 0
+        if paid >= total:
+            new_status = FeePayment.PaymentStatus.PAID
+        elif paid > 0:
+            new_status = (
+                FeePayment.PaymentStatus.OVERDUE
+                if payment.status == FeePayment.PaymentStatus.OVERDUE
+                else FeePayment.PaymentStatus.PARTIAL
+            )
+        elif payment.status == FeePayment.PaymentStatus.PAID:
+            new_status = FeePayment.PaymentStatus.PENDING
+        else:
+            new_status = payment.status
+        if (payment.total_amount, payment.status, payment.fee_structure_id) != (total, new_status, fee.id):
+            payment.total_amount = total
+            payment.status = new_status
+            payment.fee_structure = fee
+            payment.save(update_fields=['total_amount', 'status', 'fee_structure'])
+            updated += 1
+    return updated
+
+
 class FeePaymentViewSet(viewsets.ModelViewSet):
     queryset = FeePayment.objects.all()
     serializer_class = FeePaymentSerializer
@@ -521,7 +590,7 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
         # management/admin so a student or parent can't POST/PATCH their own
         # "paid" status directly (has_object_permission only guards existing
         # objects, not create, so this needs its own check).
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'recalculate']:
             return [permissions.IsAuthenticated(), IsManagementOrAdmin()]
         return [permissions.IsAuthenticated(), IsOwnerOrAdmin()]
 
@@ -546,6 +615,16 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
             except Exception:
                 return FeePayment.objects.none()
         return FeePayment.objects.none()
+
+    @action(detail=False, methods=['post'])
+    def recalculate(self, request):
+        """Re-measure every payment against today's fee (see refresh_payment_totals)."""
+        payments = FeePayment.objects.all()
+        year = request.data.get('academic_year')
+        if year:
+            payments = payments.filter(academic_year_id=year)
+        checked = payments.count()
+        return Response({'checked': checked, 'updated': refresh_payment_totals(payments)})
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
