@@ -1165,3 +1165,96 @@ class ScoreSchemeTests(APITestCase):
         self.post(10, ca1_score=8)
         grades = {r['class_grade'] for r in self.client.get('/api/results/').json().get('results', [])}
         self.assertEqual(grades, {-3, 10})
+
+
+class FeeChangeRecalculationTests(APITestCase):
+    """When a fee is changed, payments already recorded are measured against the new one."""
+
+    def setUp(self):
+        self.manager = User.objects.create_user(username='recalc-mgr', password='pw12345!', role='management')
+        self.year = AcademicYear.objects.create(
+            name='2026-2027', start_date=date(2026, 9, 1), end_date=date(2027, 7, 31), is_active=True
+        )
+        self.klass = Class.objects.create(name='Playclass', grade=-3, section='', academic_year=self.year)
+        self.fee = FeeStructure.objects.create(
+            academic_year=self.year, grade=-3, fee_type='tuition', student_type='new', amount=32500
+        )
+        self.paid_full = self._student('P1', 'Paid in full')
+        self.paid_part = self._student('P2', 'Paid part')
+        self.nothing = self._student('P3', 'Nothing yet')
+        self._pay(self.paid_full, 24000, 'partial', 'T1')
+        self._pay(self.paid_part, 10000, 'partial', 'T2')
+        self.client.force_authenticate(user=self.manager)
+
+    def _student(self, sid, first):
+        user = User.objects.create_user(username=sid.lower(), password='pw12345!', first_name=first, role='student')
+        return Student.objects.create(user=user, student_id=sid, current_class=self.klass, student_type='new')
+
+    def _pay(self, student, amount, status, tid, term='first'):
+        return FeePayment.objects.create(
+            student=student, fee_structure=self.fee, academic_year=self.year, term=term,
+            amount_paid=amount, total_amount=32500, status=status, due_date=date(2026, 9, 30), transaction_id=tid,
+        )
+
+    def _edit_fee(self, amount):
+        return self.client.patch(f'/api/fee-structures/{self.fee.id}/', {'amount': amount}, format='json')
+
+    def test_lowering_the_fee_marks_a_full_payer_as_paid(self):
+        self.assertEqual(self._edit_fee(24000).status_code, 200)
+        payment = FeePayment.objects.get(transaction_id='T1')
+        self.assertEqual(payment.total_amount, 24000)
+        self.assertEqual(payment.status, 'paid')
+        self.assertEqual(payment.amount_paid, 24000)
+
+    def test_part_payer_stays_part_paid_with_the_new_total(self):
+        self._edit_fee(24000)
+        payment = FeePayment.objects.get(transaction_id='T2')
+        self.assertEqual(payment.total_amount, 24000)
+        self.assertEqual(payment.status, 'partial')
+        self.assertEqual(payment.amount_paid, 10000)
+
+    def test_raising_the_fee_turns_a_paid_student_back_to_part_paid(self):
+        self._edit_fee(24000)
+        self._edit_fee(30000)
+        payment = FeePayment.objects.get(transaction_id='T1')
+        self.assertEqual(payment.total_amount, 30000)
+        self.assertEqual(payment.status, 'partial')
+
+    def test_overpayment_is_not_changed_when_the_fee_drops(self):
+        FeePayment.objects.filter(transaction_id='T1').update(amount_paid=32500, status='paid')
+        self._edit_fee(24000)
+        payment = FeePayment.objects.get(transaction_id='T1')
+        self.assertEqual(payment.amount_paid, 32500)
+        self.assertEqual(payment.status, 'paid')
+
+    def test_recalculate_fixes_payments_that_are_already_stale(self):
+        FeeStructure.objects.filter(pk=self.fee.pk).update(amount=24000)  # changed behind the app's back
+        response = self.client.post('/api/fee-payments/recalculate/', {}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'checked': 2, 'updated': 2})
+        self.assertEqual(FeePayment.objects.get(transaction_id='T1').status, 'paid')
+        # Running it again changes nothing.
+        self.assertEqual(self.client.post('/api/fee-payments/recalculate/', {}, format='json').json()['updated'], 0)
+
+    def test_results_unlock_for_a_student_who_paid_the_new_full_fee(self):
+        self._edit_fee(24000)
+        self.assertTrue(FeePayment.objects.filter(student=self.paid_full, term='first', status='paid').exists())
+
+    def test_only_management_can_recalculate(self):
+        self.client.force_authenticate(user=self.paid_full.user)
+        self.assertEqual(self.client.post('/api/fee-payments/recalculate/', {}, format='json').status_code, 403)
+
+    def test_a_past_session_payment_is_measured_against_its_own_fee(self):
+        old_year = AcademicYear.objects.create(
+            name='2025-2026', start_date=date(2025, 9, 1), end_date=date(2026, 7, 31), is_active=False
+        )
+        old_fee = FeeStructure.objects.create(
+            academic_year=old_year, grade=-3, fee_type='tuition', student_type='new', amount=20000
+        )
+        FeePayment.objects.create(
+            student=self.paid_full, fee_structure=old_fee, academic_year=old_year, term='first',
+            amount_paid=20000, total_amount=20000, status='paid', due_date=date(2025, 9, 30), transaction_id='OLD',
+        )
+        self._edit_fee(24000)  # a change to this year's fee
+        old = FeePayment.objects.get(transaction_id='OLD')
+        self.assertEqual((old.total_amount, old.status), (20000, 'paid'))
