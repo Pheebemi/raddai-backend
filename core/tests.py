@@ -1335,3 +1335,65 @@ class AttendanceDeleteDayTests(APITestCase):
 
     def test_a_day_with_no_records_deletes_nothing(self):
         self.assertEqual(self._delete(date(2026, 10, 18)).json(), {'deleted': 0})
+
+
+class SeniorFeeMatchingTests(APITestCase):
+    """An SS rate for 'all genders' in one department must fit a boy or girl in that department."""
+
+    def setUp(self):
+        self.manager = User.objects.create_user(username='ss-mgr', password='pw12345!', role='management')
+        self.year = AcademicYear.objects.create(
+            name='2026-2027', start_date=date(2026, 9, 1), end_date=date(2027, 7, 31), is_active=True
+        )
+        self.ss3 = Class.objects.create(name='SS 3 A', grade=12, section='A', academic_year=self.year)
+        for dept, amount in (('science', 150000), ('arts', 130000)):
+            FeeStructure.objects.create(
+                academic_year=self.year, grade=12, fee_type='tuition', student_type='returning',
+                department=dept, amount=amount,
+            )
+        self.client.force_authenticate(user=self.manager)
+
+    def _student(self, sid, gender, department, student_type='returning'):
+        user = User.objects.create_user(username=sid, password='pw12345!', role='student')
+        return Student.objects.create(
+            user=user, student_id=sid, current_class=self.ss3, gender=gender,
+            department=department, student_type=student_type,
+        )
+
+    def _pay(self, student):
+        return self.client.post('/api/payments/record-manual/', {
+            'student_id': student.id, 'amount': 50000, 'term': 'first',
+            'academic_year_id': self.year.id, 'payment_method': 'Cash',
+        }, format='json')
+
+    def test_boy_in_science_matches_a_science_rate_for_all_genders(self):
+        response = self._pay(self._student('SS3-M', 'male', 'science'))
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(FeePayment.objects.get().total_amount, 150000)
+
+    def test_girl_in_arts_gets_the_arts_rate(self):
+        response = self._pay(self._student('SS3-F', 'female', 'arts'))
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(FeePayment.objects.get().total_amount, 130000)
+
+    def test_student_with_no_department_gets_a_clear_reason(self):
+        response = self._pay(self._student('SS3-X', 'male', ''))
+        self.assertEqual(response.status_code, 400)
+        error = response.json()['error']
+        self.assertIn('2 tuition fee(s) exist for SS 3 A', error)
+        self.assertIn('department not set', error)
+
+    def test_class_with_no_fee_at_all_says_so(self):
+        other = Class.objects.create(name='SS 2 A', grade=11, section='A', academic_year=self.year)
+        user = User.objects.create_user(username='ss2', password='pw12345!', role='student')
+        student = Student.objects.create(user=user, student_id='SS2', current_class=other, student_type='returning')
+        error = self._pay(student).json()['error']
+        self.assertIn('No tuition fee is set for SS 2 A', error)
+
+    def test_more_specific_rate_still_wins(self):
+        FeeStructure.objects.create(
+            academic_year=self.year, grade=12, fee_type='tuition', student_type='returning',
+            department='science', gender='male', amount=160000,
+        )
+        self._pay(self._student('SS3-S', 'male', 'science'))
+        self.assertEqual(FeePayment.objects.get().total_amount, 160000)

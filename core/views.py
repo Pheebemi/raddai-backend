@@ -521,8 +521,11 @@ def _resolve_tuition_fee(student, academic_year):
             fee_type=FeeStructure.FeeType.TUITION,
             student_type=student_type,
         ).filter(
-            Q(gender=student.gender, department=student.department)
-            | Q(gender='', department='')
+            # A rate for "All" genders or departments (blank) fits everyone, so
+            # e.g. SS 3 Science for all genders matches a male Science student.
+            Q(gender=student.gender) | Q(gender='')
+        ).filter(
+            Q(department=student.department) | Q(department='')
         ).filter(
             Q(section=section) | Q(section='')
         ).order_by('-section', '-gender', '-department').first()
@@ -531,6 +534,33 @@ def _resolve_tuition_fee(student, academic_year):
     if not fee_structure and student.student_type == StudentType.RETURNING:
         fee_structure = find_fee(StudentType.NEW)
     return fee_structure
+
+
+def no_tuition_fee_message(student, academic_year):
+    """
+    Say *why* no tuition rate fits a student, so the fix is obvious (the blanket
+    "no fee structure" message sent people hunting for a rate that existed).
+    """
+    cls = student.current_class
+    if not cls:
+        return "This student is not in a class yet, so there is no fee to charge. Put them in a class first."
+    year = academic_year.name if academic_year else 'this session'
+    rates = FeeStructure.objects.filter(
+        academic_year=academic_year, grade=cls.grade, fee_type=FeeStructure.FeeType.TUITION
+    )
+    if not rates.exists():
+        return (f"No tuition fee is set for {cls.name} (grade {cls.grade}) in {year}. "
+                "Add one under Fee Structures before recording a payment.")
+    facts = (f"{cls.name}, {student.get_student_type_display().lower()} student, "
+             f"gender {student.gender or 'not set'}, department {student.department or 'not set'}")
+    listed = '; '.join(
+        f"{r.get_student_type_display().lower()} / gender {r.gender or 'all'} / "
+        f"department {r.department or 'all'} / section {r.section or 'all'}"
+        for r in rates[:6]
+    )
+    return (f"{rates.count()} tuition fee(s) exist for {cls.name} in {year} but none fit this student "
+            f"({facts}). The fees are for: {listed}. Fix the student's details or the fee's "
+            "settings so they match.")
 
 
 def _current_tuition_for_payment(payment):
@@ -1038,7 +1068,7 @@ def flutterwave_webhook(request):
 
     fee_structure = _resolve_tuition_fee(student, academic_year)
     if not fee_structure:
-        return Response({'error': 'No fee structure for this student'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': no_tuition_fee_message(student, academic_year)}, status=status.HTTP_400_BAD_REQUEST)
     total_amount = float(fee_structure.amount)
 
     # Term from meta, else the first term not yet fully paid
@@ -1264,8 +1294,7 @@ def record_manual_payment(request):
     fee_structure = _resolve_tuition_fee(student, academic_year)
     if not fee_structure:
         return Response({
-            'error': 'No fee structure is set up for this student\'s class/type yet. '
-                     'Add one under Fee Structures before recording a payment.'
+            'error': no_tuition_fee_message(student, academic_year)
         }, status=status.HTTP_400_BAD_REQUEST)
     total_amount = float(fee_structure.amount)
 
